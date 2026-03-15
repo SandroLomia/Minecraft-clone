@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Minecraft Clone</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-container"></div>
+    <div id="ui-container">
+        <div id="crosshair"></div>
+        <div id="joystick-base">
+            <div id="joystick-handle"></div>
+        </div>
+        <div id="mobile-buttons">
+            <button id="jump-button">Jump</button>
+            <button id="place-button">Place</button>
+            <button id="break-button">Break</button>
+        </div>
+        <div id="inventory"></div>
+    </div>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "simplex-noise": "https://cdn.jsdelivr.net/npm/simplex-noise@3.0.0/dist/esm/simplex-noise.js"
+            }
+        }
+    </script>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
