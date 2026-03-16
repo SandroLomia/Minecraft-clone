@@ -209,13 +209,18 @@ function generateTerrain(chunkX, chunkZ) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const worldX = chunkX * CHUNK_SIZE + x;
             const worldZ = chunkZ * CHUNK_SIZE + z;
-            const height = Math.floor((simplex.noise2D(worldX * 0.05, worldZ * 0.05) + 1) * 4) + 4;
+            const elevationNoise = simplex.noise2D(worldX * 0.05, worldZ * 0.05);
+            const roughnessNoise = simplex.noise2D(worldX * 0.11, worldZ * 0.11);
+            const height = Math.floor((elevationNoise + 1) * 4 + roughnessNoise * 1.5) + 5;
+            const isBeach = height <= 6;
 
             for (let y = 0; y < CHUNK_HEIGHT; y++) {
-                if (y < height - 1) {
+                if (y < height - 4) {
+                    chunk.setBlock(x, y, z, BLOCK_TYPES.STONE);
+                } else if (y < height - 1) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.DIRT);
                 } else if (y === height - 1) {
-                    chunk.setBlock(x, y, z, BLOCK_TYPES.GRASS);
+                    chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
                 } else {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
                 }
@@ -297,14 +302,84 @@ function createChunkMesh(chunk) {
     scene.add(group);
 }
 
-// Initialize world
-for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
-    for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
-        const chunk = generateTerrain(x, z);
-        chunks.set(getChunkKey(x, z), chunk);
-        createChunkMesh(chunk);
+function rebuildChunkMesh(chunk) {
+    if (chunk.mesh) {
+        scene.remove(chunk.mesh);
     }
+    createChunkMesh(chunk);
 }
+
+function ensureChunk(chunkX, chunkZ) {
+    const key = getChunkKey(chunkX, chunkZ);
+    if (chunks.has(key)) return false;
+
+    const chunk = generateTerrain(chunkX, chunkZ);
+    chunks.set(key, chunk);
+    return true;
+}
+
+function rebuildChunkAndNeighbors(chunkX, chunkZ) {
+    const offsets = [
+        [0, 0],
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1]
+    ];
+
+    offsets.forEach(([offsetX, offsetZ]) => {
+        const chunk = chunks.get(getChunkKey(chunkX + offsetX, chunkZ + offsetZ));
+        if (chunk) {
+            rebuildChunkMesh(chunk);
+        }
+    });
+}
+
+let currentCenterChunkX = Number.NaN;
+let currentCenterChunkZ = Number.NaN;
+function updateVisibleChunks(force = false) {
+    const playerChunkX = Math.floor(camera.position.x / CHUNK_SIZE);
+    const playerChunkZ = Math.floor(camera.position.z / CHUNK_SIZE);
+
+    if (!force && playerChunkX === currentCenterChunkX && playerChunkZ === currentCenterChunkZ) {
+        return;
+    }
+
+    currentCenterChunkX = playerChunkX;
+    currentCenterChunkZ = playerChunkZ;
+
+    const requiredChunkKeys = new Set();
+    const createdChunks = [];
+
+    for (let x = playerChunkX - RENDER_DISTANCE; x <= playerChunkX + RENDER_DISTANCE; x++) {
+        for (let z = playerChunkZ - RENDER_DISTANCE; z <= playerChunkZ + RENDER_DISTANCE; z++) {
+            requiredChunkKeys.add(getChunkKey(x, z));
+            if (ensureChunk(x, z)) {
+                createdChunks.push([x, z]);
+            }
+        }
+    }
+
+    chunks.forEach((chunk, key) => {
+        if (!requiredChunkKeys.has(key)) {
+            if (chunk.mesh) {
+                scene.remove(chunk.mesh);
+            }
+            chunks.delete(key);
+        }
+    });
+
+    if (createdChunks.length === 0) {
+        return;
+    }
+
+    createdChunks.forEach(([chunkX, chunkZ]) => {
+        rebuildChunkAndNeighbors(chunkX, chunkZ);
+    });
+}
+
+// Initialize world around player
+updateVisibleChunks(true);
 
 // Handle window resize
 window.addEventListener('resize', () => {
@@ -489,8 +564,7 @@ function updateBlock(worldX, worldY, worldZ, type) {
         const z = worldZ - chunkZ * CHUNK_SIZE;
 
         chunk.setBlock(x, y, z, type);
-        scene.remove(chunk.mesh);
-        createChunkMesh(chunk);
+        rebuildChunkAndNeighbors(chunkX, chunkZ);
     }
 }
 
@@ -568,6 +642,7 @@ function animate() {
     requestAnimationFrame(animate);
     handleMovement();
     updatePhysics();
+    updateVisibleChunks();
     renderer.render(scene, camera);
 }
 
