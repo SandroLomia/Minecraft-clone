@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import SimplexNoise from 'https://cdn.skypack.dev/simplex-noise@2.4.0';
 
+const textureNoise = new SimplexNoise('texture-seed');
+
 // Game constants
 const CHUNK_SIZE = 16;
 const CHUNK_HEIGHT = 16;
@@ -51,14 +53,42 @@ function createBlockTexture(blockType, color) {
     canvas.height = 16;
     const ctx = canvas.getContext('2d');
 
+    const paintPixel = (x, y, shade) => {
+        ctx.fillStyle = adjustHexColor(color, shade);
+        ctx.fillRect(x, y, 1, 1);
+    };
+
     ctx.fillStyle = adjustHexColor(color, 0);
     ctx.fillRect(0, 0, 16, 16);
 
     if (blockType === BLOCK_TYPES.GRASS) {
-        ctx.fillStyle = adjustHexColor(color, 24);
-        ctx.fillRect(0, 0, 16, 6);
-        ctx.fillStyle = adjustHexColor(BLOCK_COLORS[BLOCK_TYPES.DIRT], 8);
-        ctx.fillRect(0, 6, 16, 10);
+        // Dirt-like body with greener top strip to mimic Minecraft grass side texture.
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 0.9 + 4.2, y * 0.9 + 12.8);
+                const shade = y < 5 ? 22 + noise * 14 : -6 + noise * 18;
+                paintPixel(x, y, shade);
+            }
+        }
+
+        for (let y = 0; y < 5; y++) {
+            for (let x = 0; x < 16; x++) {
+                const grassNoise = textureNoise.noise2D(x * 1.1 + 30.3, y * 1.3 + 11.7);
+                const blend = y === 4 ? -8 : 0;
+                ctx.fillStyle = adjustHexColor(BLOCK_COLORS[BLOCK_TYPES.GRASS], 10 + grassNoise * 16 + blend);
+                ctx.fillRect(x, y, 1, 1);
+            }
+        }
+    } else if (blockType === BLOCK_TYPES.DIRT) {
+        // Chunky earthy dithering pattern close to the classic Minecraft dirt look.
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const coarse = textureNoise.noise2D(x * 0.75 + 9.1, y * 0.75 + 17.4);
+                const fine = textureNoise.noise2D(x * 1.7 + 2.3, y * 1.7 + 21.6);
+                const shade = coarse * 28 + fine * 10 - 3;
+                paintPixel(x, y, shade);
+            }
+        }
     } else if (blockType === BLOCK_TYPES.STONE) {
         for (let y = 0; y < 16; y += 4) {
             ctx.fillStyle = adjustHexColor(color, y % 8 === 0 ? 12 : -8);
@@ -70,9 +100,12 @@ function createBlockTexture(blockType, color) {
             ctx.fillRect(0, y, 16, 1);
         }
     } else if (blockType === BLOCK_TYPES.SAND) {
-        for (let y = 0; y < 16; y += 2) {
-            ctx.fillStyle = adjustHexColor(color, y % 4 === 0 ? 9 : -6);
-            ctx.fillRect(0, y, 16, 1);
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 1.2 + 5.1, y * 1.2 + 8.7);
+                const shade = 6 + noise * 14;
+                paintPixel(x, y, shade);
+            }
         }
     } else if (blockType === BLOCK_TYPES.GLASS) {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
@@ -85,12 +118,14 @@ function createBlockTexture(blockType, color) {
         ctx.stroke();
     }
 
-    for (let i = 0; i < 80; i++) {
-        const x = Math.floor(Math.random() * 16);
-        const y = Math.floor(Math.random() * 16);
-        const opacity = Math.random() * 0.22;
-        ctx.fillStyle = Math.random() > 0.5 ? `rgba(255,255,255,${opacity})` : `rgba(0,0,0,${opacity})`;
-        ctx.fillRect(x, y, 1, 1);
+    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND) {
+        for (let i = 0; i < 80; i++) {
+            const x = Math.floor(Math.random() * 16);
+            const y = Math.floor(Math.random() * 16);
+            const opacity = Math.random() * 0.22;
+            ctx.fillStyle = Math.random() > 0.5 ? `rgba(255,255,255,${opacity})` : `rgba(0,0,0,${opacity})`;
+            ctx.fillRect(x, y, 1, 1);
+        }
     }
 
     ctx.strokeStyle = 'rgba(0,0,0,0.18)';
@@ -209,13 +244,18 @@ function generateTerrain(chunkX, chunkZ) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const worldX = chunkX * CHUNK_SIZE + x;
             const worldZ = chunkZ * CHUNK_SIZE + z;
-            const height = Math.floor((simplex.noise2D(worldX * 0.05, worldZ * 0.05) + 1) * 4) + 4;
+            const elevationNoise = simplex.noise2D(worldX * 0.05, worldZ * 0.05);
+            const roughnessNoise = simplex.noise2D(worldX * 0.11, worldZ * 0.11);
+            const height = Math.floor((elevationNoise + 1) * 4 + roughnessNoise * 1.5) + 5;
+            const isBeach = height <= 6;
 
             for (let y = 0; y < CHUNK_HEIGHT; y++) {
-                if (y < height - 1) {
+                if (y < height - 4) {
+                    chunk.setBlock(x, y, z, BLOCK_TYPES.STONE);
+                } else if (y < height - 1) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.DIRT);
                 } else if (y === height - 1) {
-                    chunk.setBlock(x, y, z, BLOCK_TYPES.GRASS);
+                    chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
                 } else {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
                 }
@@ -297,14 +337,84 @@ function createChunkMesh(chunk) {
     scene.add(group);
 }
 
-// Initialize world
-for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
-    for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
-        const chunk = generateTerrain(x, z);
-        chunks.set(getChunkKey(x, z), chunk);
-        createChunkMesh(chunk);
+function rebuildChunkMesh(chunk) {
+    if (chunk.mesh) {
+        scene.remove(chunk.mesh);
     }
+    createChunkMesh(chunk);
 }
+
+function ensureChunk(chunkX, chunkZ) {
+    const key = getChunkKey(chunkX, chunkZ);
+    if (chunks.has(key)) return false;
+
+    const chunk = generateTerrain(chunkX, chunkZ);
+    chunks.set(key, chunk);
+    return true;
+}
+
+function rebuildChunkAndNeighbors(chunkX, chunkZ) {
+    const offsets = [
+        [0, 0],
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1]
+    ];
+
+    offsets.forEach(([offsetX, offsetZ]) => {
+        const chunk = chunks.get(getChunkKey(chunkX + offsetX, chunkZ + offsetZ));
+        if (chunk) {
+            rebuildChunkMesh(chunk);
+        }
+    });
+}
+
+let currentCenterChunkX = Number.NaN;
+let currentCenterChunkZ = Number.NaN;
+function updateVisibleChunks(force = false) {
+    const playerChunkX = Math.floor(camera.position.x / CHUNK_SIZE);
+    const playerChunkZ = Math.floor(camera.position.z / CHUNK_SIZE);
+
+    if (!force && playerChunkX === currentCenterChunkX && playerChunkZ === currentCenterChunkZ) {
+        return;
+    }
+
+    currentCenterChunkX = playerChunkX;
+    currentCenterChunkZ = playerChunkZ;
+
+    const requiredChunkKeys = new Set();
+    const createdChunks = [];
+
+    for (let x = playerChunkX - RENDER_DISTANCE; x <= playerChunkX + RENDER_DISTANCE; x++) {
+        for (let z = playerChunkZ - RENDER_DISTANCE; z <= playerChunkZ + RENDER_DISTANCE; z++) {
+            requiredChunkKeys.add(getChunkKey(x, z));
+            if (ensureChunk(x, z)) {
+                createdChunks.push([x, z]);
+            }
+        }
+    }
+
+    chunks.forEach((chunk, key) => {
+        if (!requiredChunkKeys.has(key)) {
+            if (chunk.mesh) {
+                scene.remove(chunk.mesh);
+            }
+            chunks.delete(key);
+        }
+    });
+
+    if (createdChunks.length === 0) {
+        return;
+    }
+
+    createdChunks.forEach(([chunkX, chunkZ]) => {
+        rebuildChunkAndNeighbors(chunkX, chunkZ);
+    });
+}
+
+// Initialize world around player
+updateVisibleChunks(true);
 
 // Handle window resize
 window.addEventListener('resize', () => {
@@ -489,8 +599,7 @@ function updateBlock(worldX, worldY, worldZ, type) {
         const z = worldZ - chunkZ * CHUNK_SIZE;
 
         chunk.setBlock(x, y, z, type);
-        scene.remove(chunk.mesh);
-        createChunkMesh(chunk);
+        rebuildChunkAndNeighbors(chunkX, chunkZ);
     }
 }
 
@@ -568,6 +677,7 @@ function animate() {
     requestAnimationFrame(animate);
     handleMovement();
     updatePhysics();
+    updateVisibleChunks();
     renderer.render(scene, camera);
 }
 
