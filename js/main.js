@@ -34,6 +34,40 @@ const BLOCK_COLORS = {
     [BLOCK_TYPES.GLASS]: 0xffffff
 };
 
+function createBlockTexture(color) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 16;
+    canvas.height = 16;
+    const ctx = canvas.getContext('2d');
+
+    // Base color
+    ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+    ctx.fillRect(0, 0, 16, 16);
+
+    // Add noise/texture
+    for (let i = 0; i < 64; i++) {
+        const x = Math.floor(Math.random() * 16);
+        const y = Math.floor(Math.random() * 16);
+        const opacity = Math.random() * 0.2;
+        ctx.fillStyle = Math.random() > 0.5 ? `rgba(255,255,255,${opacity})` : `rgba(0,0,0,${opacity})`;
+        ctx.fillRect(x, y, 1, 1);
+    }
+
+    // Border
+    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+    ctx.strokeRect(0, 0, 16, 16);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    return texture;
+}
+
+const BLOCK_TEXTURES = {};
+Object.entries(BLOCK_COLORS).forEach(([type, color]) => {
+    BLOCK_TEXTURES[type] = createBlockTexture(color);
+});
+
 // Scene setup
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB); // Sky blue
@@ -41,6 +75,35 @@ scene.fog = new THREE.Fog(0x87CEEB, 1, RENDER_DISTANCE * CHUNK_SIZE * 1.5);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(CHUNK_SIZE / 2, CHUNK_HEIGHT, CHUNK_SIZE / 2);
+camera.rotation.order = 'YXZ';
+
+// Sound system
+function createOscillatorSound(frequency, duration, type = 'sine') {
+    try {
+        const context = THREE.AudioContext.getContext();
+        const oscillator = context.createOscillator();
+        const gainNode = context.createGain();
+
+        oscillator.type = type;
+        oscillator.frequency.setValueAtTime(frequency, context.currentTime);
+        oscillator.connect(gainNode);
+        gainNode.connect(context.destination);
+
+        gainNode.gain.setValueAtTime(0.05, context.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + duration);
+
+        oscillator.start();
+        oscillator.stop(context.currentTime + duration);
+    } catch (e) {
+        console.warn('Sound could not be played', e);
+    }
+}
+
+function playSound(action) {
+    if (action === 'break') createOscillatorSound(100, 0.1, 'square');
+    if (action === 'place') createOscillatorSound(200, 0.1, 'sine');
+    if (action === 'jump') createOscillatorSound(150, 0.2, 'triangle');
+}
 
 const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -164,7 +227,11 @@ function createChunkMesh(chunk) {
 
     const group = new THREE.Group();
     for (const [blockType, matrices] of Object.entries(instancedMeshes)) {
-        const material = new THREE.MeshLambertMaterial({ color: BLOCK_COLORS[blockType] });
+        const material = new THREE.MeshLambertMaterial({
+            map: BLOCK_TEXTURES[blockType],
+            transparent: blockType == BLOCK_TYPES.GLASS,
+            opacity: blockType == BLOCK_TYPES.GLASS ? 0.6 : 1
+        });
         const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
         for (let i = 0; i < matrices.length; i++) {
             mesh.setMatrixAt(i, matrices[i]);
@@ -215,9 +282,18 @@ inventoryBlocks.forEach(type => {
 });
 
 const controls = new PointerLockControls(camera, document.body);
+const overlay = document.getElementById('overlay');
 
-document.addEventListener('click', () => {
+overlay.addEventListener('click', () => {
     controls.lock();
+});
+
+controls.addEventListener('lock', () => {
+    overlay.style.display = 'none';
+});
+
+controls.addEventListener('unlock', () => {
+    overlay.style.display = 'flex';
 });
 
 const keys = {};
@@ -263,33 +339,34 @@ joystickBase.addEventListener('touchend', () => {
 // Mobile look controls
 let lastTouchX, lastTouchY;
 document.addEventListener('touchstart', (e) => {
-    if (e.target.closest('#joystick-base') || e.target.closest('#mobile-buttons')) return;
+    if (e.target.closest('#joystick-base') || e.target.closest('#mobile-buttons') || e.target.closest('#inventory')) return;
     lastTouchX = e.touches[0].clientX;
     lastTouchY = e.touches[0].clientY;
 });
 
 document.addEventListener('touchmove', (e) => {
-    if (e.target.closest('#joystick-base') || e.target.closest('#mobile-buttons')) return;
+    if (e.target.closest('#joystick-base') || e.target.closest('#mobile-buttons') || e.target.closest('#inventory')) return;
     if (lastTouchX === undefined) return;
 
     const touch = e.touches[0];
     const deltaX = touch.clientX - lastTouchX;
     const deltaY = touch.clientY - lastTouchY;
 
-    const sensitivity = 0.005;
+    const sensitivity = 0.004;
     camera.rotation.y -= deltaX * sensitivity;
     camera.rotation.x -= deltaY * sensitivity;
     camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
 
     lastTouchX = touch.clientX;
     lastTouchY = touch.clientY;
-});
+}, { passive: false });
 
 document.getElementById('jump-button').addEventListener('touchstart', (e) => {
     e.preventDefault();
     if (isGrounded) {
         playerVelocity.y = JUMP_FORCE;
         isGrounded = false;
+        playSound('jump');
     }
 });
 
@@ -326,6 +403,7 @@ function performAction(action) {
             const y = Math.floor(pos.y);
             const z = Math.floor(pos.z);
             updateBlock(x, y, z, BLOCK_TYPES.AIR);
+            playSound('break');
         } else if (action === 'place') {
             pos.add(intersect.face.normal.clone().multiplyScalar(0.5));
             const x = Math.floor(pos.x);
@@ -338,6 +416,7 @@ function performAction(action) {
                 return;
             }
             updateBlock(x, y, z, selectedBlock);
+            playSound('place');
         }
     }
 }
@@ -382,6 +461,7 @@ function handleMovement() {
     if (keys['Space'] && isGrounded) {
         playerVelocity.y = JUMP_FORCE;
         isGrounded = false;
+        playSound('jump');
     }
 }
 
