@@ -34,27 +34,66 @@ const BLOCK_COLORS = {
     [BLOCK_TYPES.GLASS]: 0xffffff
 };
 
-function createBlockTexture(color) {
+function clampColor(value) {
+    return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function adjustHexColor(hexColor, amount) {
+    const r = clampColor(((hexColor >> 16) & 0xff) + amount);
+    const g = clampColor(((hexColor >> 8) & 0xff) + amount);
+    const b = clampColor((hexColor & 0xff) + amount);
+    return `rgb(${r}, ${g}, ${b})`;
+}
+
+function createBlockTexture(blockType, color) {
     const canvas = document.createElement('canvas');
     canvas.width = 16;
     canvas.height = 16;
     const ctx = canvas.getContext('2d');
 
-    // Base color
-    ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+    ctx.fillStyle = adjustHexColor(color, 0);
     ctx.fillRect(0, 0, 16, 16);
 
-    // Add noise/texture
-    for (let i = 0; i < 64; i++) {
+    if (blockType === BLOCK_TYPES.GRASS) {
+        ctx.fillStyle = adjustHexColor(color, 24);
+        ctx.fillRect(0, 0, 16, 6);
+        ctx.fillStyle = adjustHexColor(BLOCK_COLORS[BLOCK_TYPES.DIRT], 8);
+        ctx.fillRect(0, 6, 16, 10);
+    } else if (blockType === BLOCK_TYPES.STONE) {
+        for (let y = 0; y < 16; y += 4) {
+            ctx.fillStyle = adjustHexColor(color, y % 8 === 0 ? 12 : -8);
+            ctx.fillRect(0, y, 16, 2);
+        }
+    } else if (blockType === BLOCK_TYPES.WOOD) {
+        for (let y = 0; y < 16; y += 3) {
+            ctx.fillStyle = adjustHexColor(color, y % 6 === 0 ? 18 : -12);
+            ctx.fillRect(0, y, 16, 1);
+        }
+    } else if (blockType === BLOCK_TYPES.SAND) {
+        for (let y = 0; y < 16; y += 2) {
+            ctx.fillStyle = adjustHexColor(color, y % 4 === 0 ? 9 : -6);
+            ctx.fillRect(0, y, 16, 1);
+        }
+    } else if (blockType === BLOCK_TYPES.GLASS) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.fillRect(2, 2, 12, 12);
+        ctx.strokeStyle = 'rgba(180, 220, 255, 0.9)';
+        ctx.strokeRect(1, 1, 14, 14);
+        ctx.beginPath();
+        ctx.moveTo(2, 12);
+        ctx.lineTo(12, 2);
+        ctx.stroke();
+    }
+
+    for (let i = 0; i < 80; i++) {
         const x = Math.floor(Math.random() * 16);
         const y = Math.floor(Math.random() * 16);
-        const opacity = Math.random() * 0.2;
+        const opacity = Math.random() * 0.22;
         ctx.fillStyle = Math.random() > 0.5 ? `rgba(255,255,255,${opacity})` : `rgba(0,0,0,${opacity})`;
         ctx.fillRect(x, y, 1, 1);
     }
 
-    // Border
-    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
     ctx.strokeRect(0, 0, 16, 16);
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -65,7 +104,7 @@ function createBlockTexture(color) {
 
 const BLOCK_TEXTURES = {};
 Object.entries(BLOCK_COLORS).forEach(([type, color]) => {
-    BLOCK_TEXTURES[type] = createBlockTexture(color);
+    BLOCK_TEXTURES[type] = createBlockTexture(Number(type), color);
 });
 
 // Scene setup
@@ -78,19 +117,26 @@ camera.position.set(CHUNK_SIZE / 2, CHUNK_HEIGHT, CHUNK_SIZE / 2);
 camera.rotation.order = 'YXZ';
 
 // Sound system
-function createOscillatorSound(frequency, duration, type = 'sine') {
+function createOscillatorSound(frequency, duration, type = 'sine', gain = 0.07, attack = 0.005) {
     try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
         const context = THREE.AudioContext.getContext();
         const oscillator = context.createOscillator();
         const gainNode = context.createGain();
 
         oscillator.type = type;
         oscillator.frequency.setValueAtTime(frequency, context.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(
+            Math.max(40, frequency * 0.85),
+            context.currentTime + duration
+        );
         oscillator.connect(gainNode);
         gainNode.connect(context.destination);
 
-        gainNode.gain.setValueAtTime(0.05, context.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + duration);
+        gainNode.gain.setValueAtTime(0.0001, context.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(gain, context.currentTime + attack);
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + duration);
 
         oscillator.start();
         oscillator.stop(context.currentTime + duration);
@@ -100,9 +146,18 @@ function createOscillatorSound(frequency, duration, type = 'sine') {
 }
 
 function playSound(action) {
-    if (action === 'break') createOscillatorSound(100, 0.1, 'square');
-    if (action === 'place') createOscillatorSound(200, 0.1, 'sine');
-    if (action === 'jump') createOscillatorSound(150, 0.2, 'triangle');
+    if (action === 'break') {
+        createOscillatorSound(140, 0.08, 'square', 0.05, 0.002);
+        createOscillatorSound(92, 0.11, 'triangle', 0.03, 0.003);
+    }
+    if (action === 'place') {
+        createOscillatorSound(280, 0.07, 'sine', 0.035, 0.002);
+        createOscillatorSound(420, 0.06, 'triangle', 0.022, 0.002);
+    }
+    if (action === 'jump') {
+        createOscillatorSound(210, 0.12, 'triangle', 0.045, 0.003);
+        createOscillatorSound(300, 0.08, 'sine', 0.022, 0.002);
+    }
 }
 
 const renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -386,6 +441,8 @@ document.addEventListener('mousedown', (e) => {
     if (e.button === 2) performAction('place');
 });
 
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+
 const raycaster = new THREE.Raycaster();
 function performAction(action) {
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
@@ -439,9 +496,9 @@ function updateBlock(worldX, worldY, worldZ, type) {
 
 function handleMovement() {
     const direction = new THREE.Vector3();
+    const hasKeyboardInput = keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD'];
 
-    if (controls.isLocked) {
-        // Desktop movement
+    if (hasKeyboardInput) {
         const frontVector = new THREE.Vector3(0, 0, Number(keys['KeyS'] || 0) - Number(keys['KeyW'] || 0));
         const sideVector = new THREE.Vector3(Number(keys['KeyA'] || 0) - Number(keys['KeyD'] || 0), 0, 0);
         direction.subVectors(frontVector, sideVector);
@@ -453,7 +510,7 @@ function handleMovement() {
     direction
         .normalize()
         .multiplyScalar(MOVE_SPEED)
-        .applyQuaternion(camera.quaternion);
+        .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
     playerVelocity.z = direction.z;
