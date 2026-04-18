@@ -208,6 +208,111 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
 
+// Selection box
+const selectionBoxGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01));
+const selectionBoxMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+const selectionBox = new THREE.LineSegments(selectionBoxGeometry, selectionBoxMaterial);
+selectionBox.visible = false;
+scene.add(selectionBox);
+
+// Clouds
+const CLOUD_COUNT = 20;
+const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
+const cloudMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
+const cloudsMesh = new THREE.InstancedMesh(cloudGeometry, cloudMaterial, CLOUD_COUNT * 15);
+const cloudPositions = [];
+
+function initClouds() {
+    let index = 0;
+    for (let i = 0; i < CLOUD_COUNT; i++) {
+        const cx = (Math.random() - 0.5) * 200;
+        const cz = (Math.random() - 0.5) * 200;
+        const cy = 25 + Math.random() * 5;
+
+        const w = 4 + Math.floor(Math.random() * 4);
+        const d = 4 + Math.floor(Math.random() * 4);
+
+        for (let x = 0; x < w; x++) {
+            for (let z = 0; z < d; z++) {
+                if (Math.random() > 0.3) {
+                    const matrix = new THREE.Matrix4().makeTranslation(cx + x, cy, cz + z);
+                    cloudsMesh.setMatrixAt(index, matrix);
+                    cloudPositions.push({ index, x: cx + x, y: cy, z: cz + z });
+                    index++;
+                }
+            }
+        }
+    }
+    cloudsMesh.count = index;
+    scene.add(cloudsMesh);
+}
+initClouds();
+
+function updateClouds() {
+    const cloudBound = 100;
+    cloudPositions.forEach(cloud => {
+        cloud.x += 0.02;
+        if (cloud.x > cloudBound) cloud.x = -cloudBound;
+        const matrix = new THREE.Matrix4().makeTranslation(cloud.x, cloud.y, cloud.z);
+        cloudsMesh.setMatrixAt(cloud.index, matrix);
+    });
+    cloudsMesh.instanceMatrix.needsUpdate = true;
+}
+
+// Particles
+const particles = [];
+const particleGeometry = new THREE.BoxGeometry(0.15, 0.15, 0.15);
+const particleMaterialCache = new Map();
+
+function getParticleMaterial(color) {
+    if (!particleMaterialCache.has(color)) {
+        particleMaterialCache.set(color, new THREE.MeshLambertMaterial({ color: color }));
+    }
+    return particleMaterialCache.get(color);
+}
+
+function createBreakParticles(pos, blockType) {
+    const color = BLOCK_COLORS[blockType];
+    if (color === undefined) return;
+
+    const particleCount = 12;
+    const material = getParticleMaterial(color);
+
+    for (let i = 0; i < particleCount; i++) {
+        const mesh = new THREE.Mesh(particleGeometry, material);
+        mesh.position.set(
+            pos.x + (Math.random() - 0.5) * 0.5,
+            pos.y + (Math.random() - 0.5) * 0.5,
+            pos.z + (Math.random() - 0.5) * 0.5
+        );
+
+        const velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.1,
+            Math.random() * 0.1 + 0.05,
+            (Math.random() - 0.5) * 0.1
+        );
+
+        scene.add(mesh);
+        particles.push({ mesh, velocity, life: 1.0 });
+    }
+}
+
+function updateParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.velocity.y += GRAVITY * 0.5;
+        p.mesh.position.add(p.velocity);
+        p.life -= 0.03;
+
+        if (p.life <= 0) {
+            scene.remove(p.mesh);
+            particles.splice(i, 1);
+        } else {
+            p.mesh.scale.setScalar(p.life);
+        }
+    }
+}
+
 class Chunk {
     constructor(x, z) {
         this.x = x;
@@ -231,6 +336,8 @@ class Chunk {
 }
 
 const chunks = new Map();
+const terrainGroup = new THREE.Group();
+scene.add(terrainGroup);
 
 function getChunkKey(x, z) {
     return `${x},${z}`;
@@ -238,8 +345,33 @@ function getChunkKey(x, z) {
 
 const simplex = new SimplexNoise();
 
+function generateTree(chunk, tx, ty, tz) {
+    const treeHeight = 4 + Math.floor(Math.random() * 2);
+    for (let y = 0; y < treeHeight; y++) {
+        chunk.setBlock(tx, ty + y, tz, BLOCK_TYPES.WOOD);
+    }
+
+    const leafRadius = 2;
+    for (let x = -leafRadius; x <= leafRadius; x++) {
+        for (let y = -leafRadius; y <= leafRadius; y++) {
+            for (let z = -leafRadius; z <= leafRadius; z++) {
+                if (x * x + y * y + z * z <= leafRadius * leafRadius + 1) {
+                    const lx = tx + x;
+                    const ly = ty + treeHeight + y - 1;
+                    const lz = tz + z;
+                    if (chunk.getBlock(lx, ly, lz) === BLOCK_TYPES.AIR) {
+                        chunk.setBlock(lx, ly, lz, BLOCK_TYPES.LEAVES);
+                    }
+                }
+            }
+        }
+    }
+}
+
 function generateTerrain(chunkX, chunkZ) {
     const chunk = new Chunk(chunkX, chunkZ);
+    const treePositions = [];
+
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const worldX = chunkX * CHUNK_SIZE + x;
@@ -256,12 +388,20 @@ function generateTerrain(chunkX, chunkZ) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.DIRT);
                 } else if (y === height - 1) {
                     chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
+                    if (!isBeach && Math.random() < 0.015) {
+                        treePositions.push({ x, y: height, z });
+                    }
                 } else {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
                 }
             }
         }
     }
+
+    treePositions.forEach(pos => {
+        generateTree(chunk, pos.x, pos.y, pos.z);
+    });
+
     return chunk;
 }
 
@@ -334,12 +474,12 @@ function createChunkMesh(chunk) {
         group.add(mesh);
     }
     chunk.mesh = group;
-    scene.add(group);
+    terrainGroup.add(group);
 }
 
 function rebuildChunkMesh(chunk) {
     if (chunk.mesh) {
-        scene.remove(chunk.mesh);
+        terrainGroup.remove(chunk.mesh);
     }
     createChunkMesh(chunk);
 }
@@ -398,7 +538,7 @@ function updateVisibleChunks(force = false) {
     chunks.forEach((chunk, key) => {
         if (!requiredChunkKeys.has(key)) {
             if (chunk.mesh) {
-                scene.remove(chunk.mesh);
+                terrainGroup.remove(chunk.mesh);
             }
             chunks.delete(key);
         }
@@ -554,9 +694,31 @@ document.addEventListener('mousedown', (e) => {
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const raycaster = new THREE.Raycaster();
+
+function updateSelectionBox() {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(terrainGroup.children, true);
+
+    if (intersects.length > 0) {
+        const intersect = intersects[0];
+        if (intersect.distance <= 5) {
+            const pos = intersect.point.clone();
+            pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
+            selectionBox.position.set(
+                Math.floor(pos.x) + 0.5,
+                Math.floor(pos.y) + 0.5,
+                Math.floor(pos.z) + 0.5
+            );
+            selectionBox.visible = true;
+            return;
+        }
+    }
+    selectionBox.visible = false;
+}
+
 function performAction(action) {
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-    const intersects = raycaster.intersectObjects(scene.children, true);
+    const intersects = raycaster.intersectObjects(terrainGroup.children, true);
 
     if (intersects.length > 0) {
         const intersect = intersects[0];
@@ -569,8 +731,12 @@ function performAction(action) {
             const x = Math.floor(pos.x);
             const y = Math.floor(pos.y);
             const z = Math.floor(pos.z);
-            updateBlock(x, y, z, BLOCK_TYPES.AIR);
-            playSound('break');
+            const blockType = getBlockAt(x, y, z);
+            if (blockType !== BLOCK_TYPES.AIR) {
+                createBreakParticles(new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5), blockType);
+                updateBlock(x, y, z, BLOCK_TYPES.AIR);
+                playSound('break');
+            }
         } else if (action === 'place') {
             pos.add(intersect.face.normal.clone().multiplyScalar(0.5));
             const x = Math.floor(pos.x);
@@ -678,6 +844,9 @@ function animate() {
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
+    updateSelectionBox();
+    updateClouds();
+    updateParticles();
     renderer.render(scene, camera);
 }
 
