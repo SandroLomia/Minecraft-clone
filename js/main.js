@@ -99,6 +99,18 @@ function createBlockTexture(blockType, color) {
             ctx.fillStyle = adjustHexColor(color, y % 6 === 0 ? 18 : -12);
             ctx.fillRect(0, y, 16, 1);
         }
+    } else if (blockType === BLOCK_TYPES.LEAVES) {
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 1.5 + 2.5, y * 1.5 + 5.5);
+                if (noise > 0.1) {
+                    ctx.fillStyle = adjustHexColor(color, 15 + noise * 10);
+                } else {
+                    ctx.fillStyle = adjustHexColor(color, -10 + noise * 10);
+                }
+                ctx.fillRect(x, y, 1, 1);
+            }
+        }
     } else if (blockType === BLOCK_TYPES.SAND) {
         for (let y = 0; y < 16; y++) {
             for (let x = 0; x < 16; x++) {
@@ -118,7 +130,7 @@ function createBlockTexture(blockType, color) {
         ctx.stroke();
     }
 
-    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND) {
+    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND && blockType !== BLOCK_TYPES.LEAVES) {
         for (let i = 0; i < 80; i++) {
             const x = Math.floor(Math.random() * 16);
             const y = Math.floor(Math.random() * 16);
@@ -208,6 +220,106 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
 
+// Selection Box
+const selectionGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const selectionMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+const selectionEdges = new THREE.EdgesGeometry(selectionGeometry);
+const selectionBox = new THREE.LineSegments(selectionEdges, selectionMaterial);
+selectionBox.visible = false;
+scene.add(selectionBox);
+
+const terrainGroup = new THREE.Group();
+scene.add(terrainGroup);
+
+// Cloud System
+const cloudsGroup = new THREE.Group();
+scene.add(cloudsGroup);
+
+function createClouds() {
+    const cloudGeometry = new THREE.BoxGeometry(20, 4, 12);
+    const cloudMaterial = new THREE.MeshLambertMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.8
+    });
+
+    for (let i = 0; i < 20; i++) {
+        const cloud = new THREE.Mesh(cloudGeometry, cloudMaterial);
+        cloud.position.set(
+            (Math.random() - 0.5) * 400,
+            25 + Math.random() * 10,
+            (Math.random() - 0.5) * 400
+        );
+        cloud.scale.set(
+            1 + Math.random() * 2,
+            0.8 + Math.random() * 0.4,
+            1 + Math.random() * 1.5
+        );
+        cloudsGroup.add(cloud);
+    }
+}
+createClouds();
+
+function updateClouds() {
+    cloudsGroup.children.forEach(cloud => {
+        cloud.position.x += 0.02;
+        // World wrapping for clouds (X-axis movement only)
+        if (cloud.position.x > 200) cloud.position.x = -200;
+    });
+}
+
+// Particles
+const particles = [];
+const particleGeometry = new THREE.BoxGeometry(0.15, 0.15, 0.15);
+const materialCache = new Map();
+
+function createParticles(x, y, z, blockType) {
+    const color = BLOCK_COLORS[blockType] || 0xffffff;
+
+    if (!materialCache.has(color)) {
+        materialCache.set(color, new THREE.MeshLambertMaterial({ color }));
+    }
+    const material = materialCache.get(color);
+
+    for (let i = 0; i < 8; i++) {
+        const particle = new THREE.Mesh(particleGeometry, material);
+        particle.position.set(
+            x + Math.random() - 0.5,
+            y + Math.random() - 0.5,
+            z + Math.random() - 0.5
+        );
+
+        const velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.1,
+            Math.random() * 0.15,
+            (Math.random() - 0.5) * 0.1
+        );
+
+        particles.push({
+            mesh: particle,
+            velocity,
+            life: 1.0
+        });
+
+        scene.add(particle);
+    }
+}
+
+function updateParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.velocity.y += GRAVITY;
+        p.mesh.position.add(p.velocity);
+        p.life -= 0.02;
+        p.mesh.scale.setScalar(p.life);
+
+        if (p.life <= 0) {
+            scene.remove(p.mesh);
+            particles.splice(i, 1);
+        }
+    }
+}
+
 class Chunk {
     constructor(x, z) {
         this.x = x;
@@ -260,9 +372,50 @@ function generateTerrain(chunkX, chunkZ) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
                 }
             }
+
+            // Randomly spawn trees on grass
+            if (!isBeach && height < CHUNK_HEIGHT - 6) {
+                if (Math.random() < 0.02) {
+                    spawnTree(chunk, x, height, z);
+                }
+            }
         }
     }
     return chunk;
+}
+
+function spawnTree(chunk, x, y, z) {
+    const trunkHeight = 3 + Math.floor(Math.random() * 3);
+
+    // Trunk
+    for (let i = 0; i < trunkHeight; i++) {
+        if (y + i < CHUNK_HEIGHT) {
+            chunk.setBlock(x, y + i, z, BLOCK_TYPES.WOOD);
+        }
+    }
+
+    // Leaves
+    const leafRadius = 2;
+    for (let lx = -leafRadius; lx <= leafRadius; lx++) {
+        for (let ly = -leafRadius; ly <= leafRadius; ly++) {
+            for (let lz = -leafRadius; lz <= leafRadius; lz++) {
+                const dist = Math.sqrt(lx * lx + ly * ly + lz * lz);
+                if (dist <= leafRadius + 0.5) {
+                    const leafX = x + lx;
+                    const leafY = y + trunkHeight + ly - 1;
+                    const leafZ = z + lz;
+
+                    if (leafX >= 0 && leafX < CHUNK_SIZE &&
+                        leafY >= 0 && leafY < CHUNK_HEIGHT &&
+                        leafZ >= 0 && leafZ < CHUNK_SIZE) {
+                        if (chunk.getBlock(leafX, leafY, leafZ) === BLOCK_TYPES.AIR) {
+                            chunk.setBlock(leafX, leafY, leafZ, BLOCK_TYPES.LEAVES);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 function getBlockAt(worldX, worldY, worldZ) {
@@ -334,12 +487,12 @@ function createChunkMesh(chunk) {
         group.add(mesh);
     }
     chunk.mesh = group;
-    scene.add(group);
+    terrainGroup.add(group);
 }
 
 function rebuildChunkMesh(chunk) {
     if (chunk.mesh) {
-        scene.remove(chunk.mesh);
+        terrainGroup.remove(chunk.mesh);
     }
     createChunkMesh(chunk);
 }
@@ -398,7 +551,7 @@ function updateVisibleChunks(force = false) {
     chunks.forEach((chunk, key) => {
         if (!requiredChunkKeys.has(key)) {
             if (chunk.mesh) {
-                scene.remove(chunk.mesh);
+                terrainGroup.remove(chunk.mesh);
             }
             chunks.delete(key);
         }
@@ -429,7 +582,7 @@ let isGrounded = false;
 let selectedBlock = BLOCK_TYPES.STONE;
 
 const inventoryUI = document.getElementById('inventory');
-const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS];
+const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.LEAVES, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS];
 
 inventoryBlocks.forEach(type => {
     const slot = document.createElement('div');
@@ -462,7 +615,20 @@ controls.addEventListener('unlock', () => {
 });
 
 const keys = {};
-document.addEventListener('keydown', (e) => keys[e.code] = true);
+document.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+
+    // Inventory selection with numeric keys
+    const numKeys = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7'];
+    const index = numKeys.indexOf(e.code);
+    if (index !== -1 && index < inventoryBlocks.length) {
+        selectedBlock = inventoryBlocks[index];
+        document.querySelectorAll('.inventory-slot').forEach((s, i) => {
+            if (i === index) s.classList.add('selected');
+            else s.classList.remove('selected');
+        });
+    }
+});
 document.addEventListener('keyup', (e) => keys[e.code] = false);
 
 // Mobile touch state
@@ -554,9 +720,30 @@ document.addEventListener('mousedown', (e) => {
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const raycaster = new THREE.Raycaster();
+function updateSelection() {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(terrainGroup.children, true);
+
+    if (intersects.length > 0) {
+        const intersect = intersects[0];
+        if (intersect.distance <= 5) {
+            const pos = intersect.point.clone();
+            pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
+            selectionBox.position.set(
+                Math.floor(pos.x) + 0.5,
+                Math.floor(pos.y) + 0.5,
+                Math.floor(pos.z) + 0.5
+            );
+            selectionBox.visible = true;
+            return;
+        }
+    }
+    selectionBox.visible = false;
+}
+
 function performAction(action) {
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-    const intersects = raycaster.intersectObjects(scene.children, true);
+    const intersects = raycaster.intersectObjects(terrainGroup.children, true);
 
     if (intersects.length > 0) {
         const intersect = intersects[0];
@@ -569,6 +756,12 @@ function performAction(action) {
             const x = Math.floor(pos.x);
             const y = Math.floor(pos.y);
             const z = Math.floor(pos.z);
+
+            const blockType = getBlockAt(x, y, z);
+            if (blockType !== BLOCK_TYPES.AIR) {
+                createParticles(x + 0.5, y + 0.5, z + 0.5, blockType);
+            }
+
             updateBlock(x, y, z, BLOCK_TYPES.AIR);
             playSound('break');
         } else if (action === 'place') {
@@ -678,6 +871,9 @@ function animate() {
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
+    updateSelection();
+    updateClouds();
+    updateParticles();
     renderer.render(scene, camera);
 }
 
