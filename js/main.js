@@ -204,9 +204,132 @@ document.getElementById('game-container').appendChild(renderer.domElement);
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
 scene.add(ambientLight);
 
+const terrainGroup = new THREE.Group();
+scene.add(terrainGroup);
+
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
+
+// Selection Highlighter
+const highlighterGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const highlighterMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.5
+});
+const highlighter = new THREE.Mesh(highlighterGeometry, highlighterMaterial);
+highlighter.visible = false;
+scene.add(highlighter);
+
+// Clouds
+const CLOUD_COUNT = 20;
+const CLOUD_HEIGHT = 30;
+const CLOUD_SPEED = 0.02;
+const CLOUD_AREA = 200;
+
+const clouds = new THREE.Group();
+scene.add(clouds);
+
+const cloudMaterial = new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.8
+});
+
+function createClouds() {
+    for (let i = 0; i < CLOUD_COUNT; i++) {
+        const w = 10 + Math.random() * 20;
+        const h = 2 + Math.random() * 2;
+        const d = 10 + Math.random() * 15;
+        const geometry = new THREE.BoxGeometry(w, h, d);
+        const cloud = new THREE.Mesh(geometry, cloudMaterial);
+
+        cloud.position.set(
+            (Math.random() - 0.5) * CLOUD_AREA,
+            CLOUD_HEIGHT + Math.random() * 5,
+            (Math.random() - 0.5) * CLOUD_AREA
+        );
+        clouds.add(cloud);
+    }
+}
+
+createClouds();
+
+function updateClouds() {
+    const playerX = camera.position.x;
+    const playerZ = camera.position.z;
+
+    clouds.children.forEach(cloud => {
+        cloud.position.x += CLOUD_SPEED;
+
+        // Wrap around player
+        if (cloud.position.x > playerX + CLOUD_AREA / 2) {
+            cloud.position.x -= CLOUD_AREA;
+        }
+        if (cloud.position.x < playerX - CLOUD_AREA / 2) {
+            cloud.position.x += CLOUD_AREA;
+        }
+        if (cloud.position.z > playerZ + CLOUD_AREA / 2) {
+            cloud.position.z -= CLOUD_AREA;
+        }
+        if (cloud.position.z < playerZ - CLOUD_AREA / 2) {
+            cloud.position.z += CLOUD_AREA;
+        }
+    });
+}
+
+// Particles
+const particles = [];
+const particleGeometry = new THREE.BoxGeometry(0.15, 0.15, 0.15);
+const particleMaterialCache = new Map();
+
+function getParticleMaterial(color) {
+    if (!particleMaterialCache.has(color)) {
+        particleMaterialCache.set(color, new THREE.MeshLambertMaterial({ color }));
+    }
+    return particleMaterialCache.get(color);
+}
+
+function spawnParticles(position, color) {
+    const count = 20;
+    for (let i = 0; i < count; i++) {
+        const particle = new THREE.Mesh(particleGeometry, getParticleMaterial(color));
+        particle.position.copy(position);
+
+        const velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.2,
+            Math.random() * 0.2,
+            (Math.random() - 0.5) * 0.2
+        );
+
+        particles.push({
+            mesh: particle,
+            velocity: velocity,
+            life: 1.0 // 1 second life
+        });
+
+        scene.add(particle);
+    }
+}
+
+function updateParticles() {
+    const deltaTime = 0.016; // approx 60fps
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.life -= deltaTime;
+
+        if (p.life <= 0) {
+            scene.remove(p.mesh);
+            particles.splice(i, 1);
+            continue;
+        }
+
+        p.velocity.y += GRAVITY * 0.5; // Apply gravity
+        p.mesh.position.add(p.velocity);
+    }
+}
 
 class Chunk {
     constructor(x, z) {
@@ -256,9 +379,11 @@ function generateTerrain(chunkX, chunkZ) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.DIRT);
                 } else if (y === height - 1) {
                     chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
-                } else {
-                    chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
                 }
+            }
+
+            if (!isBeach && height < CHUNK_HEIGHT - 6 && Math.random() < 0.02) {
+                spawnTree(chunk, x, height, z);
             }
         }
     }
@@ -334,14 +459,44 @@ function createChunkMesh(chunk) {
         group.add(mesh);
     }
     chunk.mesh = group;
-    scene.add(group);
+    terrainGroup.add(group);
 }
 
 function rebuildChunkMesh(chunk) {
     if (chunk.mesh) {
-        scene.remove(chunk.mesh);
+        terrainGroup.remove(chunk.mesh);
     }
     createChunkMesh(chunk);
+}
+
+function spawnTree(chunk, x, y, z) {
+    // Trunk
+    const trunkHeight = 4 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < trunkHeight; i++) {
+        chunk.setBlock(x, y + i, z, BLOCK_TYPES.WOOD);
+    }
+
+    // Leaves
+    const leafStart = y + trunkHeight - 2;
+    for (let lx = -2; lx <= 2; lx++) {
+        for (let lz = -2; lz <= 2; lz++) {
+            for (let ly = 0; ly < 2; ly++) {
+                if (Math.abs(lx) === 2 && Math.abs(lz) === 2 && Math.random() > 0.5) continue;
+                if (chunk.getBlock(x + lx, leafStart + ly, z + lz) === BLOCK_TYPES.AIR) {
+                    chunk.setBlock(x + lx, leafStart + ly, z + lz, BLOCK_TYPES.LEAVES);
+                }
+            }
+        }
+    }
+    // Top leaves
+    for (let lx = -1; lx <= 1; lx++) {
+        for (let lz = -1; lz <= 1; lz++) {
+            if (Math.abs(lx) === 1 && Math.abs(lz) === 1 && Math.random() > 0.5) continue;
+            if (chunk.getBlock(x + lx, leafStart + 2, z + lz) === BLOCK_TYPES.AIR) {
+                chunk.setBlock(x + lx, leafStart + 2, z + lz, BLOCK_TYPES.LEAVES);
+            }
+        }
+    }
 }
 
 function ensureChunk(chunkX, chunkZ) {
@@ -398,7 +553,7 @@ function updateVisibleChunks(force = false) {
     chunks.forEach((chunk, key) => {
         if (!requiredChunkKeys.has(key)) {
             if (chunk.mesh) {
-                scene.remove(chunk.mesh);
+                terrainGroup.remove(chunk.mesh);
             }
             chunks.delete(key);
         }
@@ -554,13 +709,35 @@ document.addEventListener('mousedown', (e) => {
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const raycaster = new THREE.Raycaster();
-function performAction(action) {
+
+function updateHighlighter() {
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-    const intersects = raycaster.intersectObjects(scene.children, true);
+    const intersects = raycaster.intersectObjects(terrainGroup.children, true);
 
     if (intersects.length > 0) {
         const intersect = intersects[0];
-        if (intersect.distance > 5) return;
+        if (intersect.distance <= 5) {
+            const pos = intersect.point.clone();
+            pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
+            highlighter.position.set(
+                Math.floor(pos.x) + 0.5,
+                Math.floor(pos.y) + 0.5,
+                Math.floor(pos.z) + 0.5
+            );
+            highlighter.visible = true;
+            return;
+        }
+    }
+    highlighter.visible = false;
+}
+
+function performAction(action) {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(terrainGroup.children, true);
+
+    if (intersects.length > 0) {
+        const intersect = intersects[0];
+        if (intersect.distance > 10) return;
 
         const pos = intersect.point.clone();
 
@@ -569,8 +746,12 @@ function performAction(action) {
             const x = Math.floor(pos.x);
             const y = Math.floor(pos.y);
             const z = Math.floor(pos.z);
-            updateBlock(x, y, z, BLOCK_TYPES.AIR);
-            playSound('break');
+            const blockType = getBlockAt(x, y, z);
+            if (blockType !== BLOCK_TYPES.AIR) {
+                spawnParticles(new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5), BLOCK_COLORS[blockType]);
+                updateBlock(x, y, z, BLOCK_TYPES.AIR);
+                playSound('break');
+            }
         } else if (action === 'place') {
             pos.add(intersect.face.normal.clone().multiplyScalar(0.5));
             const x = Math.floor(pos.x);
@@ -678,6 +859,9 @@ function animate() {
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
+    updateHighlighter();
+    updateParticles();
+    updateClouds();
     renderer.render(scene, camera);
 }
 
