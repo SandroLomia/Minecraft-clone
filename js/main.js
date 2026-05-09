@@ -99,6 +99,19 @@ function createBlockTexture(blockType, color) {
             ctx.fillStyle = adjustHexColor(color, y % 6 === 0 ? 18 : -12);
             ctx.fillRect(0, y, 16, 1);
         }
+    } else if (blockType === BLOCK_TYPES.LEAVES) {
+        for (let i = 0; i < 60; i++) {
+            const x = Math.floor(Math.random() * 16);
+            const y = Math.floor(Math.random() * 16);
+            const shade = Math.random() * 30 - 15;
+            paintPixel(x, y, shade);
+        }
+        for (let i = 0; i < 15; i++) {
+            const x = Math.floor(Math.random() * 15);
+            const y = Math.floor(Math.random() * 15);
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.fillRect(x, y, 2, 1);
+        }
     } else if (blockType === BLOCK_TYPES.SAND) {
         for (let y = 0; y < 16; y++) {
             for (let x = 0; x < 16; x++) {
@@ -141,6 +154,57 @@ const BLOCK_TEXTURES = {};
 Object.entries(BLOCK_COLORS).forEach(([type, color]) => {
     BLOCK_TEXTURES[type] = createBlockTexture(Number(type), color);
 });
+
+// Particle system setup
+const particleGeometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+const particleMaterials = new Map();
+
+function getParticleMaterial(color) {
+    if (!particleMaterials.has(color)) {
+        particleMaterials.set(color, new THREE.MeshLambertMaterial({ color: color }));
+    }
+    return particleMaterials.get(color);
+}
+
+const particles = [];
+
+function spawnParticles(x, y, z, color) {
+    const material = getParticleMaterial(color);
+    for (let i = 0; i < 8; i++) {
+        const particle = new THREE.Mesh(particleGeometry, material);
+        particle.position.set(x + 0.5, y + 0.5, z + 0.5);
+
+        const velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.2,
+            Math.random() * 0.2,
+            (Math.random() - 0.5) * 0.2
+        );
+
+        particles.push({
+            mesh: particle,
+            velocity: velocity,
+            life: 1.0
+        });
+
+        scene.add(particle);
+    }
+}
+
+function updateParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.velocity.y += GRAVITY;
+        p.mesh.position.add(p.velocity);
+        p.life -= 0.02;
+
+        if (p.life <= 0) {
+            scene.remove(p.mesh);
+            particles.splice(i, 1);
+        } else {
+            p.mesh.scale.set(p.life, p.life, p.life);
+        }
+    }
+}
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -208,6 +272,43 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
 
+let gameTime = 6000; // Start at morning
+const DAY_DURATION = 24000;
+
+function updateDayNightCycle() {
+    gameTime = (gameTime + 1) % DAY_DURATION;
+    const sunAngle = (gameTime / DAY_DURATION) * Math.PI * 2;
+
+    directionalLight.position.set(
+        Math.cos(sunAngle) * 100,
+        Math.sin(sunAngle) * 100,
+        50
+    );
+
+    const lerpFactor = Math.max(0, Math.min(1, (Math.sin(sunAngle) + 0.5) * 2));
+
+    const dayColor = new THREE.Color(0x87CEEB);
+    const nightColor = new THREE.Color(0x050510);
+    const currentSkyColor = dayColor.clone().lerp(nightColor, 1 - lerpFactor);
+
+    scene.background = currentSkyColor;
+    scene.fog.color = currentSkyColor;
+    directionalLight.intensity = lerpFactor * 0.8;
+    ambientLight.intensity = 0.2 + lerpFactor * 0.4;
+}
+
+// Selection box for highlighting the targeted block
+const selectionBoxGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const selectionBoxMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.5
+});
+const selectionBox = new THREE.Mesh(selectionBoxGeometry, selectionBoxMaterial);
+selectionBox.raycast = () => null; // Prevent selection box from being hit by raycaster
+scene.add(selectionBox);
+
 class Chunk {
     constructor(x, z) {
         this.x = x;
@@ -240,6 +341,8 @@ const simplex = new SimplexNoise();
 
 function generateTerrain(chunkX, chunkZ) {
     const chunk = new Chunk(chunkX, chunkZ);
+    const heights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const worldX = chunkX * CHUNK_SIZE + x;
@@ -247,6 +350,7 @@ function generateTerrain(chunkX, chunkZ) {
             const elevationNoise = simplex.noise2D(worldX * 0.05, worldZ * 0.05);
             const roughnessNoise = simplex.noise2D(worldX * 0.11, worldZ * 0.11);
             const height = Math.floor((elevationNoise + 1) * 4 + roughnessNoise * 1.5) + 5;
+            heights[x + z * CHUNK_SIZE] = height;
             const isBeach = height <= 6;
 
             for (let y = 0; y < CHUNK_HEIGHT; y++) {
@@ -262,6 +366,32 @@ function generateTerrain(chunkX, chunkZ) {
             }
         }
     }
+
+    // Tree generation
+    for (let x = 2; x < CHUNK_SIZE - 2; x++) {
+        for (let z = 2; z < CHUNK_SIZE - 2; z++) {
+            const height = heights[x + z * CHUNK_SIZE];
+
+            if (height > 6 && Math.random() < 0.015) { // Only on grass, 1.5% chance
+                // Trunk
+                for (let ty = 0; ty < 3; ty++) {
+                    chunk.setBlock(x, height + ty, z, BLOCK_TYPES.WOOD);
+                }
+                // Leaves
+                for (let lx = -1; lx <= 1; lx++) {
+                    for (let lz = -1; lz <= 1; lz++) {
+                        for (let ly = 0; ly < 2; ly++) {
+                            if (lx === 0 && lz === 0 && ly === 0) continue;
+                            if (chunk.getBlock(x + lx, height + 2 + ly, z + lz) === BLOCK_TYPES.AIR) {
+                                chunk.setBlock(x + lx, height + 2 + ly, z + lz, BLOCK_TYPES.LEAVES);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     return chunk;
 }
 
@@ -429,7 +559,7 @@ let isGrounded = false;
 let selectedBlock = BLOCK_TYPES.STONE;
 
 const inventoryUI = document.getElementById('inventory');
-const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS];
+const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.LEAVES, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS];
 
 inventoryBlocks.forEach(type => {
     const slot = document.createElement('div');
@@ -554,6 +684,27 @@ document.addEventListener('mousedown', (e) => {
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const raycaster = new THREE.Raycaster();
+
+function updateSelectionBox() {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(scene.children, true);
+
+    if (intersects.length > 0 && intersects[0].distance <= 5) {
+        const intersect = intersects[0];
+        const pos = intersect.point.clone();
+        pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
+
+        selectionBox.position.set(
+            Math.floor(pos.x) + 0.5,
+            Math.floor(pos.y) + 0.5,
+            Math.floor(pos.z) + 0.5
+        );
+        selectionBox.visible = true;
+    } else {
+        selectionBox.visible = false;
+    }
+}
+
 function performAction(action) {
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
     const intersects = raycaster.intersectObjects(scene.children, true);
@@ -569,8 +720,13 @@ function performAction(action) {
             const x = Math.floor(pos.x);
             const y = Math.floor(pos.y);
             const z = Math.floor(pos.z);
-            updateBlock(x, y, z, BLOCK_TYPES.AIR);
-            playSound('break');
+
+            const blockType = getBlockAt(x, y, z);
+            if (blockType !== BLOCK_TYPES.AIR) {
+                spawnParticles(x, y, z, BLOCK_COLORS[blockType]);
+                updateBlock(x, y, z, BLOCK_TYPES.AIR);
+                playSound('break');
+            }
         } else if (action === 'place') {
             pos.add(intersect.face.normal.clone().multiplyScalar(0.5));
             const x = Math.floor(pos.x);
@@ -606,6 +762,7 @@ function updateBlock(worldX, worldY, worldZ, type) {
 function handleMovement() {
     const direction = new THREE.Vector3();
     const hasKeyboardInput = keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD'];
+    const isSprinting = keys['ShiftLeft'] || keys['ShiftRight'];
 
     if (hasKeyboardInput) {
         const frontVector = new THREE.Vector3(0, 0, Number(keys['KeyS'] || 0) - Number(keys['KeyW'] || 0));
@@ -616,9 +773,11 @@ function handleMovement() {
         direction.set(joystickVector.x, 0, joystickVector.y);
     }
 
+    const speed = isSprinting ? MOVE_SPEED * 1.6 : MOVE_SPEED;
+
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(speed)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
@@ -677,7 +836,10 @@ function animate() {
     requestAnimationFrame(animate);
     handleMovement();
     updatePhysics();
+    updateParticles();
+    updateDayNightCycle();
     updateVisibleChunks();
+    updateSelectionBox();
     renderer.render(scene, camera);
 }
 
