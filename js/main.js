@@ -8,6 +8,7 @@ const textureNoise = new SimplexNoise('texture-seed');
 const CHUNK_SIZE = 16;
 const CHUNK_HEIGHT = 16;
 const RENDER_DISTANCE = 3;
+const DAY_DURATION = 24000;
 
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.4;
@@ -116,9 +117,21 @@ function createBlockTexture(blockType, color) {
         ctx.moveTo(2, 12);
         ctx.lineTo(12, 2);
         ctx.stroke();
+    } else if (blockType === BLOCK_TYPES.LEAVES) {
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 1.5 + 44.1, y * 1.5 + 22.2);
+                if (noise > 0.1) {
+                    const shade = noise * 15 - 5;
+                    paintPixel(x, y, shade);
+                } else {
+                    ctx.clearRect(x, y, 1, 1);
+                }
+            }
+        }
     }
 
-    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND) {
+    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND && blockType !== BLOCK_TYPES.LEAVES) {
         for (let i = 0; i < 80; i++) {
             const x = Math.floor(Math.random() * 16);
             const y = Math.floor(Math.random() * 16);
@@ -150,6 +163,15 @@ scene.fog = new THREE.Fog(0x87CEEB, 1, RENDER_DISTANCE * CHUNK_SIZE * 1.5);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(CHUNK_SIZE / 2, CHUNK_HEIGHT, CHUNK_SIZE / 2);
 camera.rotation.order = 'YXZ';
+
+// Selection Box Highlight
+const selectionBoxGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const selectionBoxEdges = new THREE.EdgesGeometry(selectionBoxGeometry);
+const selectionBoxMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+const selectionBox = new THREE.LineSegments(selectionBoxEdges, selectionBoxMaterial);
+selectionBox.visible = false;
+selectionBox.raycast = () => null; // Don't let it block raycasts
+scene.add(selectionBox);
 
 // Sound system
 function createOscillatorSound(frequency, duration, type = 'sine', gain = 0.07, attack = 0.005) {
@@ -208,6 +230,8 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
 
+let gameTime = 6000; // Start in the morning
+
 class Chunk {
     constructor(x, z) {
         this.x = x;
@@ -258,6 +282,24 @@ function generateTerrain(chunkX, chunkZ) {
                     chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
                 } else {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
+                }
+            }
+
+            // Procedural Trees
+            if (!isBeach && x > 1 && x < CHUNK_SIZE - 2 && z > 1 && z < CHUNK_SIZE - 2) {
+                if (Math.random() < 0.015) {
+                    const treeHeight = 3;
+                    for (let ty = 0; ty < treeHeight; ty++) {
+                        chunk.setBlock(x, height + ty, z, BLOCK_TYPES.WOOD);
+                    }
+                    for (let lx = -1; lx <= 1; lx++) {
+                        for (let lz = -1; lz <= 1; lz++) {
+                            for (let ly = 0; ly < 2; ly++) {
+                                if (lx === 0 && lz === 0 && ly === 0) continue;
+                                chunk.setBlock(x + lx, height + treeHeight + ly - 1, z + lz, BLOCK_TYPES.LEAVES);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -322,9 +364,10 @@ function createChunkMesh(chunk) {
 
     const group = new THREE.Group();
     for (const [blockType, matrices] of Object.entries(instancedMeshes)) {
+        const isTransparent = blockType == BLOCK_TYPES.GLASS || blockType == BLOCK_TYPES.LEAVES;
         const material = new THREE.MeshLambertMaterial({
             map: BLOCK_TEXTURES[blockType],
-            transparent: blockType == BLOCK_TYPES.GLASS,
+            transparent: isTransparent,
             opacity: blockType == BLOCK_TYPES.GLASS ? 0.6 : 1
         });
         const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
@@ -616,9 +659,12 @@ function handleMovement() {
         direction.set(joystickVector.x, 0, joystickVector.y);
     }
 
+    const isSprinting = keys['ShiftLeft'] || keys['ShiftRight'];
+    const currentSpeed = MOVE_SPEED * (isSprinting ? 1.6 : 1.0);
+
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(currentSpeed)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
@@ -675,6 +721,44 @@ function updatePhysics() {
 // Basic game loop
 function animate() {
     requestAnimationFrame(animate);
+
+    // Day/Night Cycle
+    gameTime = (gameTime + 1) % DAY_DURATION;
+    const dayFactor = Math.sin((gameTime / DAY_DURATION) * Math.PI * 2);
+    const lerpFactor = Math.max(0, Math.min(1, (dayFactor + 1) / 2));
+
+    // Rotate directional light (sun/moon)
+    const angle = (gameTime / DAY_DURATION) * Math.PI * 2;
+    directionalLight.position.set(
+        Math.cos(angle) * 100,
+        Math.sin(angle) * 100,
+        50
+    );
+    directionalLight.intensity = Math.max(0, dayFactor) * 0.8;
+
+    // Background and Fog color
+    const dayColor = new THREE.Color(0x87CEEB);
+    const nightColor = new THREE.Color(0x050510);
+    const currentColor = dayColor.clone().lerp(nightColor, 1 - lerpFactor);
+    scene.background = currentColor;
+    scene.fog.color = currentColor;
+
+    // Update selection highlight
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(scene.children, true);
+    if (intersects.length > 0 && intersects[0].distance <= 5) {
+        const intersect = intersects[0];
+        const pos = intersect.point.clone().add(intersect.face.normal.clone().multiplyScalar(-0.5));
+        selectionBox.position.set(
+            Math.floor(pos.x) + 0.5,
+            Math.floor(pos.y) + 0.5,
+            Math.floor(pos.z) + 0.5
+        );
+        selectionBox.visible = true;
+    } else {
+        selectionBox.visible = false;
+    }
+
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
