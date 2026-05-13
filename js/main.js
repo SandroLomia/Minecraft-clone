@@ -107,6 +107,18 @@ function createBlockTexture(blockType, color) {
                 paintPixel(x, y, shade);
             }
         }
+    } else if (blockType === BLOCK_TYPES.LEAVES) {
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 1.5 + 2.1, y * 1.5 + 4.3);
+                const shade = noise * 20;
+                paintPixel(x, y, shade);
+                if (Math.random() > 0.8) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    ctx.fillRect(x, y, 1, 1);
+                }
+            }
+        }
     } else if (blockType === BLOCK_TYPES.GLASS) {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
         ctx.fillRect(2, 2, 12, 12);
@@ -208,6 +220,19 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
 
+// Selection box
+const selectionBoxGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const selectionBoxMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.5
+});
+const selectionBox = new THREE.Mesh(selectionBoxGeometry, selectionBoxMaterial);
+selectionBox.visible = false;
+selectionBox.raycast = () => null; // Prevent selection box from being hit by raycast
+scene.add(selectionBox);
+
 class Chunk {
     constructor(x, z) {
         this.x = x;
@@ -231,6 +256,13 @@ class Chunk {
 }
 
 const chunks = new Map();
+const DAY_DURATION = 24000;
+let gameTime = 6000; // Start at morning
+
+// Particles
+const particles = [];
+const PARTICLE_LIFETIME = 1000; // ms
+const PARTICLE_GRAVITY = -0.005;
 
 function getChunkKey(x, z) {
     return `${x},${z}`;
@@ -258,6 +290,28 @@ function generateTerrain(chunkX, chunkZ) {
                     chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
                 } else {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
+                }
+            }
+
+            // Simple tree generation
+            if (!isBeach && x > 1 && x < CHUNK_SIZE - 2 && z > 1 && z < CHUNK_SIZE - 2) {
+                // Use a stable pseudo-random value based on coordinates
+                const treeNoise = Math.abs(Math.sin(worldX * 12.9898 + worldZ * 78.233) * 43758.5453) % 1;
+                if (treeNoise < 0.015) {
+                    const treeHeight = 3;
+                    // Trunk
+                    for (let ty = 0; ty < treeHeight; ty++) {
+                        chunk.setBlock(x, height + ty, z, BLOCK_TYPES.WOOD);
+                    }
+                    // Leaves
+                    for (let lx = -1; lx <= 1; lx++) {
+                        for (let lz = -1; lz <= 1; lz++) {
+                            for (let ly = 0; ly < 3; ly++) {
+                                if (lx === 0 && lz === 0 && ly < 1) continue;
+                                chunk.setBlock(x + lx, height + treeHeight + ly - 1, z + lz, BLOCK_TYPES.LEAVES);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -429,7 +483,7 @@ let isGrounded = false;
 let selectedBlock = BLOCK_TYPES.STONE;
 
 const inventoryUI = document.getElementById('inventory');
-const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS];
+const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS, BLOCK_TYPES.LEAVES];
 
 inventoryBlocks.forEach(type => {
     const slot = document.createElement('div');
@@ -569,6 +623,28 @@ function performAction(action) {
             const x = Math.floor(pos.x);
             const y = Math.floor(pos.y);
             const z = Math.floor(pos.z);
+            const blockType = getBlockAt(x, y, z);
+
+            if (blockType !== BLOCK_TYPES.AIR) {
+                // Spawn particles
+                const color = BLOCK_COLORS[blockType];
+                const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+                const material = new THREE.MeshLambertMaterial({ color: color });
+
+                for (let i = 0; i < 8; i++) {
+                    const particle = new THREE.Mesh(geometry, material);
+                    particle.position.set(x + 0.5, y + 0.5, z + 0.5);
+                    particle.userData.velocity = new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.1,
+                        Math.random() * 0.1,
+                        (Math.random() - 0.5) * 0.1
+                    );
+                    particle.userData.createdAt = Date.now();
+                    scene.add(particle);
+                    particles.push(particle);
+                }
+            }
+
             updateBlock(x, y, z, BLOCK_TYPES.AIR);
             playSound('break');
         } else if (action === 'place') {
@@ -616,9 +692,11 @@ function handleMovement() {
         direction.set(joystickVector.x, 0, joystickVector.y);
     }
 
+    const speedMultiplier = (keys['ShiftLeft'] || keys['ShiftRight']) ? 1.6 : 1.0;
+
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(MOVE_SPEED * speedMultiplier)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
@@ -675,9 +753,67 @@ function updatePhysics() {
 // Basic game loop
 function animate() {
     requestAnimationFrame(animate);
+
+    // Day/Night cycle
+    gameTime = (gameTime + 2) % DAY_DURATION;
+    const sunAngle = (gameTime / DAY_DURATION) * Math.PI * 2;
+    directionalLight.position.set(
+        Math.cos(sunAngle) * 100,
+        Math.sin(sunAngle) * 100,
+        50
+    );
+
+    // Update sky and fog color
+    const dayColor = new THREE.Color(0x87CEEB);
+    const nightColor = new THREE.Color(0x050510);
+    const lerpFactor = Math.max(0, Math.min(1, (Math.sin(sunAngle) + 0.5) * 1.5));
+
+    const currentColor = new THREE.Color().lerpColors(nightColor, dayColor, lerpFactor);
+    scene.background = currentColor;
+    if (scene.fog) scene.fog.color = currentColor;
+    directionalLight.intensity = 0.2 + lerpFactor * 0.8;
+    ambientLight.intensity = 0.1 + lerpFactor * 0.5;
+
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
+
+    // Update selection box
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(scene.children, true);
+    if (intersects.length > 0 && intersects[0].distance <= 5) {
+        const intersect = intersects[0];
+        const pos = intersect.point.clone();
+        pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
+        selectionBox.position.set(
+            Math.floor(pos.x) + 0.5,
+            Math.floor(pos.y) + 0.5,
+            Math.floor(pos.z) + 0.5
+        );
+        selectionBox.visible = true;
+    } else {
+        selectionBox.visible = false;
+    }
+
+    // Update particles
+    const now = Date.now();
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const particle = particles[i];
+        const age = now - particle.userData.createdAt;
+
+        if (age > PARTICLE_LIFETIME) {
+            scene.remove(particle);
+            particles.splice(i, 1);
+        } else {
+            particle.userData.velocity.y += PARTICLE_GRAVITY;
+            particle.position.add(particle.userData.velocity);
+            particle.rotation.x += 0.1;
+            particle.rotation.y += 0.1;
+            particle.material.opacity = 1 - (age / PARTICLE_LIFETIME);
+            particle.material.transparent = true;
+        }
+    }
+
     renderer.render(scene, camera);
 }
 
