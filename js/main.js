@@ -144,8 +144,13 @@ Object.entries(BLOCK_COLORS).forEach(([type, color]) => {
 
 // Scene setup
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87CEEB); // Sky blue
-scene.fog = new THREE.Fog(0x87CEEB, 1, RENDER_DISTANCE * CHUNK_SIZE * 1.5);
+const dayColor = new THREE.Color(0x87CEEB); // Sky blue
+const nightColor = new THREE.Color(0x050510); // Very dark blue/black
+scene.background = dayColor.clone();
+scene.fog = new THREE.Fog(dayColor, 1, RENDER_DISTANCE * CHUNK_SIZE * 1.5);
+
+let gameTime = 6000; // Start at 6:00 AM
+const DAY_DURATION = 24000; // Duration of a full day in frames/ticks
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(CHUNK_SIZE / 2, CHUNK_HEIGHT, CHUNK_SIZE / 2);
@@ -208,6 +213,19 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
 
+// Selection box
+const selectionGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const selectionMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.5
+});
+const selectionBox = new THREE.Mesh(selectionGeometry, selectionMaterial);
+selectionBox.visible = false;
+selectionBox.raycast = () => null; // Don't let the selection box interfere with raycasting
+scene.add(selectionBox);
+
 class Chunk {
     constructor(x, z) {
         this.x = x;
@@ -258,6 +276,26 @@ function generateTerrain(chunkX, chunkZ) {
                     chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
                 } else {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
+                }
+            }
+
+            // Simple tree generation
+            if (!isBeach && x > 1 && x < CHUNK_SIZE - 2 && z > 1 && z < CHUNK_SIZE - 2) {
+                if (Math.random() < 0.015) { // 1.5% chance per column
+                    const trunkHeight = 3;
+                    for (let ty = 0; ty < trunkHeight; ty++) {
+                        chunk.setBlock(x, height + ty, z, BLOCK_TYPES.WOOD);
+                    }
+                    // Leaves
+                    for (let lx = -1; lx <= 1; lx++) {
+                        for (let lz = -1; lz <= 1; lz++) {
+                            for (let ly = 0; ly < 2; ly++) {
+                                if (lx === 0 && lz === 0 && ly === 0) continue;
+                                chunk.setBlock(x + lx, height + trunkHeight + ly, z + lz, BLOCK_TYPES.LEAVES);
+                            }
+                        }
+                    }
+                    chunk.setBlock(x, height + trunkHeight + 2, z, BLOCK_TYPES.LEAVES);
                 }
             }
         }
@@ -429,7 +467,7 @@ let isGrounded = false;
 let selectedBlock = BLOCK_TYPES.STONE;
 
 const inventoryUI = document.getElementById('inventory');
-const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS];
+const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS, BLOCK_TYPES.LEAVES];
 
 inventoryBlocks.forEach(type => {
     const slot = document.createElement('div');
@@ -672,12 +710,51 @@ function updatePhysics() {
     camera.position.copy(nextPos);
 }
 
+function updateSelection() {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(scene.children, true);
+
+    if (intersects.length > 0) {
+        const intersect = intersects[0];
+        if (intersect.distance <= 5) {
+            const pos = intersect.point.clone();
+            pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
+            selectionBox.position.set(
+                Math.floor(pos.x) + 0.5,
+                Math.floor(pos.y) + 0.5,
+                Math.floor(pos.z) + 0.5
+            );
+            selectionBox.visible = true;
+            return;
+        }
+    }
+    selectionBox.visible = false;
+}
+
+function updateDayNightCycle() {
+    gameTime = (gameTime + 1) % DAY_DURATION;
+    const lerpFactor = Math.max(0, Math.min(1, (Math.sin((gameTime / DAY_DURATION) * Math.PI * 2) + 1) / 2));
+
+    scene.background.lerpColors(nightColor, dayColor, lerpFactor);
+    scene.fog.color.copy(scene.background);
+
+    const sunAngle = (gameTime / DAY_DURATION) * Math.PI * 2;
+    directionalLight.position.set(
+        Math.cos(sunAngle) * 100,
+        Math.sin(sunAngle) * 100,
+        50
+    );
+    directionalLight.intensity = Math.max(0, Math.sin(sunAngle)) * 0.8 + 0.2;
+}
+
 // Basic game loop
 function animate() {
     requestAnimationFrame(animate);
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
+    updateSelection();
+    updateDayNightCycle();
     renderer.render(scene, camera);
 }
 
