@@ -208,6 +208,47 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
 
+// Day/Night Cycle
+let gameTime = 6000; // Start at morning
+const DAY_DURATION = 24000;
+
+function updateDayNightCycle() {
+    gameTime = (gameTime + 5) % DAY_DURATION;
+    const timeRatio = gameTime / DAY_DURATION;
+
+    // Rotate sun
+    const angle = timeRatio * Math.PI * 2;
+    directionalLight.position.set(
+        Math.cos(angle) * 100,
+        Math.sin(angle) * 100,
+        50
+    );
+
+    // Update colors
+    const sunIntensity = Math.max(0, Math.sin(angle));
+    directionalLight.intensity = sunIntensity * 0.8;
+    ambientLight.intensity = 0.2 + sunIntensity * 0.4;
+
+    const skyColor = new THREE.Color().lerpColors(
+        new THREE.Color(0x050510), // Night
+        new THREE.Color(0x87CEEB), // Day
+        sunIntensity
+    );
+    scene.background = skyColor;
+    scene.fog.color = skyColor;
+}
+
+// Selection Box
+const selectionBoxGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const selectionBoxMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+const selectionBox = new THREE.LineSegments(
+    new THREE.EdgesGeometry(selectionBoxGeometry),
+    selectionBoxMaterial
+);
+selectionBox.visible = false;
+selectionBox.raycast = () => null; // Prevent selection box from being raycasted
+scene.add(selectionBox);
+
 class Chunk {
     constructor(x, z) {
         this.x = x;
@@ -256,8 +297,40 @@ function generateTerrain(chunkX, chunkZ) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.DIRT);
                 } else if (y === height - 1) {
                     chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
-                } else {
-                    chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
+                }
+            }
+        }
+    }
+
+    // Tree generation (in a separate pass to avoid overwriting with AIR)
+    for (let x = 0; x < CHUNK_SIZE; x++) {
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+            const worldX = chunkX * CHUNK_SIZE + x;
+            const worldZ = chunkZ * CHUNK_SIZE + z;
+            const elevationNoise = simplex.noise2D(worldX * 0.05, worldZ * 0.05);
+            const roughnessNoise = simplex.noise2D(worldX * 0.11, worldZ * 0.11);
+            const height = Math.floor((elevationNoise + 1) * 4 + roughnessNoise * 1.5) + 5;
+            const isBeach = height <= 6;
+
+            // Use a deterministic seed for trees based on coordinates
+            const treeNoise = simplex.noise2D(worldX * 100, worldZ * 100);
+            if (!isBeach && treeNoise > 0.97) {
+                // Check bounds for tree canopy (3x3)
+                if (x > 0 && x < CHUNK_SIZE - 1 && z > 0 && z < CHUNK_SIZE - 1 && height < CHUNK_HEIGHT - 4) {
+                    // Trunk
+                    for (let th = 0; th < 3; th++) {
+                        chunk.setBlock(x, height + th, z, BLOCK_TYPES.WOOD);
+                    }
+                    // Canopy
+                    for (let lx = -1; lx <= 1; lx++) {
+                        for (let lz = -1; lz <= 1; lz++) {
+                            for (let ly = 2; ly <= 3; ly++) {
+                                if (chunk.getBlock(x + lx, height + ly, z + lz) === BLOCK_TYPES.AIR) {
+                                    chunk.setBlock(x + lx, height + ly, z + lz, BLOCK_TYPES.LEAVES);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -554,6 +627,27 @@ document.addEventListener('mousedown', (e) => {
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const raycaster = new THREE.Raycaster();
+function updateSelectionBox() {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(scene.children, true);
+
+    if (intersects.length > 0) {
+        const intersect = intersects[0];
+        if (intersect.distance <= 5) {
+            const pos = intersect.point.clone();
+            pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
+            selectionBox.position.set(
+                Math.floor(pos.x) + 0.5,
+                Math.floor(pos.y) + 0.5,
+                Math.floor(pos.z) + 0.5
+            );
+            selectionBox.visible = true;
+            return;
+        }
+    }
+    selectionBox.visible = false;
+}
+
 function performAction(action) {
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
     const intersects = raycaster.intersectObjects(scene.children, true);
@@ -677,6 +771,8 @@ function animate() {
     requestAnimationFrame(animate);
     handleMovement();
     updatePhysics();
+    updateSelectionBox();
+    updateDayNightCycle();
     updateVisibleChunks();
     renderer.render(scene, camera);
 }
