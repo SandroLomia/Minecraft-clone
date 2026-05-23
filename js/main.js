@@ -151,6 +151,38 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 camera.position.set(CHUNK_SIZE / 2, CHUNK_HEIGHT, CHUNK_SIZE / 2);
 camera.rotation.order = 'YXZ';
 
+// Day/Night Cycle constants
+let gameTime = 6000; // Start at morning
+const DAY_DURATION = 24000;
+const envDayColor = new THREE.Color(0x87CEEB);
+const envNightColor = new THREE.Color(0x0a0a1a);
+const envCurrentColor = new THREE.Color();
+
+function updateEnvironment() {
+    gameTime = (gameTime + 1) % DAY_DURATION;
+    const dayProgress = gameTime / DAY_DURATION;
+
+    // Intensity follows a sine wave: peak at 12000 (noon), min at 0/24000 (midnight)
+    const intensity = Math.max(0.1, Math.sin(dayProgress * Math.PI));
+
+    envCurrentColor.copy(envNightColor).lerp(envDayColor, intensity);
+    scene.background = envCurrentColor;
+    if (scene.fog) {
+        scene.fog.color = envCurrentColor;
+    }
+
+    ambientLight.intensity = 0.2 + intensity * 0.4;
+    directionalLight.intensity = intensity * 0.8;
+
+    // Move sun across the sky
+    const sunAngle = dayProgress * Math.PI * 2 - Math.PI / 2;
+    directionalLight.position.set(
+        Math.cos(sunAngle) * 100,
+        Math.sin(sunAngle) * 100,
+        50
+    );
+}
+
 // Sound system
 function createOscillatorSound(frequency, duration, type = 'sine', gain = 0.07, attack = 0.005) {
     try {
@@ -207,6 +239,14 @@ scene.add(ambientLight);
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
+
+// Selection Box
+const selectionGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const selectionMaterial = new THREE.LineBasicMaterial({ color: 0x000000 });
+const selectionBox = new THREE.LineSegments(new THREE.EdgesGeometry(selectionGeometry), selectionMaterial);
+selectionBox.visible = false;
+selectionBox.raycast = () => null;
+scene.add(selectionBox);
 
 class Chunk {
     constructor(x, z) {
@@ -553,6 +593,50 @@ document.addEventListener('mousedown', (e) => {
 
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
+const particles = [];
+const particleGeometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+const particleMaterials = new Map();
+
+function createParticles(x, y, z, type) {
+    if (type === BLOCK_TYPES.AIR) return;
+
+    let material = particleMaterials.get(type);
+    if (!material) {
+        material = new THREE.MeshLambertMaterial({ map: BLOCK_TEXTURES[type] });
+        particleMaterials.set(type, material);
+    }
+
+    for (let i = 0; i < 8; i++) {
+        const particle = new THREE.Mesh(particleGeometry, material);
+        particle.position.set(x + 0.5, y + 0.5, z + 0.5);
+
+        const velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.2,
+            Math.random() * 0.2,
+            (Math.random() - 0.5) * 0.2
+        );
+
+        const life = 1.0;
+        particles.push({ mesh: particle, velocity, life });
+        scene.add(particle);
+    }
+}
+
+function updateParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.velocity.y += GRAVITY * 0.5;
+        p.mesh.position.add(p.velocity);
+        p.life -= 0.02;
+        p.mesh.scale.setScalar(p.life);
+
+        if (p.life <= 0) {
+            scene.remove(p.mesh);
+            particles.splice(i, 1);
+        }
+    }
+}
+
 const raycaster = new THREE.Raycaster();
 function performAction(action) {
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
@@ -569,6 +653,8 @@ function performAction(action) {
             const x = Math.floor(pos.x);
             const y = Math.floor(pos.y);
             const z = Math.floor(pos.z);
+            const blockType = getBlockAt(x, y, z);
+            createParticles(x, y, z, blockType);
             updateBlock(x, y, z, BLOCK_TYPES.AIR);
             playSound('break');
         } else if (action === 'place') {
@@ -616,9 +702,11 @@ function handleMovement() {
         direction.set(joystickVector.x, 0, joystickVector.y);
     }
 
+    const speed = MOVE_SPEED * ((keys['ShiftLeft'] || keys['ShiftRight']) ? 1.6 : 1.0);
+
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(speed)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
@@ -672,12 +760,36 @@ function updatePhysics() {
     camera.position.copy(nextPos);
 }
 
+function updateSelectionBox() {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(scene.children, true);
+
+    if (intersects.length > 0) {
+        const intersect = intersects[0];
+        if (intersect.distance <= 5) {
+            const pos = intersect.point.clone();
+            pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
+            selectionBox.position.set(
+                Math.floor(pos.x) + 0.5,
+                Math.floor(pos.y) + 0.5,
+                Math.floor(pos.z) + 0.5
+            );
+            selectionBox.visible = true;
+            return;
+        }
+    }
+    selectionBox.visible = false;
+}
+
 // Basic game loop
 function animate() {
     requestAnimationFrame(animate);
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
+    updateSelectionBox();
+    updateEnvironment();
+    updateParticles();
     renderer.render(scene, camera);
 }
 
