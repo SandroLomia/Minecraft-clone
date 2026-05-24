@@ -14,6 +14,13 @@ const PLAYER_RADIUS = 0.4;
 const GRAVITY = -0.015;
 const JUMP_FORCE = 0.2;
 const MOVE_SPEED = 0.1;
+const DAY_DURATION = 24000;
+window.gameTime = 6000; // Start at morning
+
+// Environment colors for day/night cycle
+const envDayColor = new THREE.Color(0x87CEEB);
+const envNightColor = new THREE.Color(0x000011);
+const envDuskColor = new THREE.Color(0xffa500);
 
 const BLOCK_TYPES = {
     AIR: 0,
@@ -201,12 +208,67 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.getElementById('game-container').appendChild(renderer.domElement);
 
 // Lighting
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
 scene.add(ambientLight);
 
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
+
+function updateEnvironment() {
+    window.gameTime = (window.gameTime + 1) % DAY_DURATION;
+    const timeRatio = window.gameTime / DAY_DURATION;
+
+    let targetSkyColor;
+    let dirIntensity;
+    let ambIntensity;
+
+    if (timeRatio < 0.2 || timeRatio > 0.8) { // Night
+        targetSkyColor = envNightColor;
+        dirIntensity = 0.1;
+        ambIntensity = 0.1;
+    } else if (timeRatio > 0.3 && timeRatio < 0.7) { // Day
+        targetSkyColor = envDayColor;
+        dirIntensity = 0.8;
+        ambIntensity = 0.4;
+    } else { // Transition (Dusk/Dawn)
+        targetSkyColor = envDuskColor;
+        dirIntensity = 0.4;
+        ambIntensity = 0.2;
+    }
+
+    // Smoothly transition colors and intensity
+    if (scene.background) {
+        scene.background.lerp(targetSkyColor, 0.02);
+        if (scene.fog) {
+            scene.fog.color.copy(scene.background);
+        }
+    }
+    directionalLight.intensity = THREE.MathUtils.lerp(directionalLight.intensity, dirIntensity, 0.02);
+    ambientLight.intensity = THREE.MathUtils.lerp(ambientLight.intensity, ambIntensity, 0.02);
+
+    // Rotate directional light to simulate sun movement
+    // Sun rises at 0.25, peaks at 0.5, sets at 0.75
+    const sunAngle = (timeRatio - 0.25) * Math.PI * 2;
+    directionalLight.position.set(
+        Math.cos(sunAngle) * 100,
+        Math.sin(sunAngle) * 100,
+        50
+    );
+}
+
+// Selection box
+const selectionGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const selectionMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.5
+});
+const selectionBox = new THREE.Mesh(selectionGeometry, selectionMaterial);
+selectionBox.raycast = () => null;
+selectionBox.visible = false;
+scene.add(selectionBox);
 
 class Chunk {
     constructor(x, z) {
@@ -258,6 +320,27 @@ function generateTerrain(chunkX, chunkZ) {
                     chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
                 } else {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
+                }
+            }
+
+            // Tree generation
+            if (!isBeach && x > 1 && x < CHUNK_SIZE - 2 && z > 1 && z < CHUNK_SIZE - 2) {
+                const treeNoise = simplex.noise2D(worldX * 0.5 + 100, worldZ * 0.5 + 100);
+                if (treeNoise > 0.9) {
+                    const treeHeight = 3;
+                    // Trunk
+                    for (let th = 0; th < treeHeight; th++) {
+                        chunk.setBlock(x, height + th, z, BLOCK_TYPES.WOOD);
+                    }
+                    // Canopy
+                    for (let ly = -1; ly <= 1; ly++) {
+                        for (let lx = -1; lx <= 1; lx++) {
+                            for (let lz = -1; lz <= 1; lz++) {
+                                if (lx === 0 && lz === 0 && ly < 1) continue;
+                                chunk.setBlock(x + lx, height + treeHeight + ly, z + lz, BLOCK_TYPES.LEAVES);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -554,6 +637,28 @@ document.addEventListener('mousedown', (e) => {
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const raycaster = new THREE.Raycaster();
+
+function updateSelectionBox() {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(scene.children, true);
+
+    if (intersects.length > 0) {
+        const intersect = intersects[0];
+        if (intersect.distance <= 5) {
+            const pos = intersect.point.clone();
+            pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
+            selectionBox.position.set(
+                Math.floor(pos.x) + 0.5,
+                Math.floor(pos.y) + 0.5,
+                Math.floor(pos.z) + 0.5
+            );
+            selectionBox.visible = true;
+            return;
+        }
+    }
+    selectionBox.visible = false;
+}
+
 function performAction(action) {
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
     const intersects = raycaster.intersectObjects(scene.children, true);
@@ -616,9 +721,12 @@ function handleMovement() {
         direction.set(joystickVector.x, 0, joystickVector.y);
     }
 
+    const isSprinting = keys['ShiftLeft'] || keys['ShiftRight'];
+    const speed = MOVE_SPEED * (isSprinting ? 1.6 : 1.0);
+
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(speed)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
@@ -678,6 +786,8 @@ function animate() {
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
+    updateSelectionBox();
+    updateEnvironment();
     renderer.render(scene, camera);
 }
 
