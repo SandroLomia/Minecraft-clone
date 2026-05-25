@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import SimplexNoise from 'https://cdn.skypack.dev/simplex-noise@2.4.0';
+import SimplexNoise from 'simplex-noise';
 
 const textureNoise = new SimplexNoise('texture-seed');
 
@@ -14,6 +14,9 @@ const PLAYER_RADIUS = 0.4;
 const GRAVITY = -0.015;
 const JUMP_FORCE = 0.2;
 const MOVE_SPEED = 0.1;
+
+const DAY_DURATION = 24000;
+window.gameTime = 6000; // Start at morning
 
 const BLOCK_TYPES = {
     AIR: 0,
@@ -107,6 +110,19 @@ function createBlockTexture(blockType, color) {
                 paintPixel(x, y, shade);
             }
         }
+    } else if (blockType === BLOCK_TYPES.LEAVES) {
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 1.5 + 20, y * 1.5 + 20);
+                const shade = noise * 25;
+                paintPixel(x, y, shade);
+                // Add some darker spots for depth
+                if (noise > 0.4) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    ctx.fillRect(x, y, 1, 1);
+                }
+            }
+        }
     } else if (blockType === BLOCK_TYPES.GLASS) {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
         ctx.fillRect(2, 2, 12, 12);
@@ -118,7 +134,7 @@ function createBlockTexture(blockType, color) {
         ctx.stroke();
     }
 
-    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND) {
+    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND && blockType !== BLOCK_TYPES.LEAVES) {
         for (let i = 0; i < 80; i++) {
             const x = Math.floor(Math.random() * 16);
             const y = Math.floor(Math.random() * 16);
@@ -208,6 +224,58 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
 
+const envDayColor = new THREE.Color(0x87CEEB);
+const envNightColor = new THREE.Color(0x000011);
+const envDuskColor = new THREE.Color(0xffa500);
+
+function updateEnvironment() {
+    window.gameTime = (window.gameTime + 1) % DAY_DURATION;
+    const timeRatio = window.gameTime / DAY_DURATION;
+
+    // Day cycle: 0-0.25 dawn, 0.25-0.75 day, 0.75-1.0 dusk/night
+    let skyColor = new THREE.Color();
+    let intensity = 1.0;
+
+    if (timeRatio < 0.2 || timeRatio > 0.8) { // Night
+        skyColor.copy(envNightColor);
+        intensity = 0.1;
+    } else if (timeRatio < 0.3) { // Dawn
+        const t = (timeRatio - 0.2) / 0.1;
+        skyColor.copy(envNightColor).lerp(envDuskColor, t);
+        intensity = 0.1 + 0.3 * t;
+    } else if (timeRatio < 0.4) { // To Day
+        const t = (timeRatio - 0.3) / 0.1;
+        skyColor.copy(envDuskColor).lerp(envDayColor, t);
+        intensity = 0.4 + 0.4 * t;
+    } else if (timeRatio < 0.6) { // Full Day
+        skyColor.copy(envDayColor);
+        intensity = 0.8;
+    } else if (timeRatio < 0.7) { // To Dusk
+        const t = (timeRatio - 0.6) / 0.1;
+        skyColor.copy(envDayColor).lerp(envDuskColor, t);
+        intensity = 0.8 - 0.4 * t;
+    } else { // To Night
+        const t = (timeRatio - 0.7) / 0.1;
+        skyColor.copy(envDuskColor).lerp(envNightColor, t);
+        intensity = 0.4 - 0.3 * t;
+    }
+
+    scene.background.copy(skyColor);
+    if (scene.fog) {
+        scene.fog.color.copy(skyColor);
+    }
+    ambientLight.intensity = Math.max(0.1, intensity * 0.5);
+    directionalLight.intensity = intensity;
+
+    // Update sun position
+    const sunAngle = (timeRatio * Math.PI * 2) - Math.PI / 2;
+    directionalLight.position.set(
+        Math.cos(sunAngle) * 100,
+        Math.sin(sunAngle) * 100,
+        50
+    );
+}
+
 class Chunk {
     constructor(x, z) {
         this.x = x;
@@ -240,6 +308,8 @@ const simplex = new SimplexNoise();
 
 function generateTerrain(chunkX, chunkZ) {
     const chunk = new Chunk(chunkX, chunkZ);
+    const surfaceHeights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const worldX = chunkX * CHUNK_SIZE + x;
@@ -247,6 +317,7 @@ function generateTerrain(chunkX, chunkZ) {
             const elevationNoise = simplex.noise2D(worldX * 0.05, worldZ * 0.05);
             const roughnessNoise = simplex.noise2D(worldX * 0.11, worldZ * 0.11);
             const height = Math.floor((elevationNoise + 1) * 4 + roughnessNoise * 1.5) + 5;
+            surfaceHeights[x + z * CHUNK_SIZE] = height;
             const isBeach = height <= 6;
 
             for (let y = 0; y < CHUNK_HEIGHT; y++) {
@@ -262,6 +333,35 @@ function generateTerrain(chunkX, chunkZ) {
             }
         }
     }
+
+    // Add trees
+    for (let x = 2; x < CHUNK_SIZE - 2; x++) {
+        for (let z = 2; z < CHUNK_SIZE - 2; z++) {
+            const worldX = chunkX * CHUNK_SIZE + x;
+            const worldZ = chunkZ * CHUNK_SIZE + z;
+            const treeNoise = simplex.noise2D(worldX * 0.5, worldZ * 0.5);
+            const height = surfaceHeights[x + z * CHUNK_SIZE];
+
+            if (treeNoise > 0.8 && height > 6 && height < CHUNK_HEIGHT - 5) {
+                // Trunk
+                for (let ty = 0; ty < 3; ty++) {
+                    chunk.setBlock(x, height + ty, z, BLOCK_TYPES.WOOD);
+                }
+                // Leaves
+                for (let lx = -1; lx <= 1; lx++) {
+                    for (let lz = -1; lz <= 1; lz++) {
+                        for (let ly = 0; ly < 2; ly++) {
+                            if (chunk.getBlock(x + lx, height + 3 + ly, z + lz) === BLOCK_TYPES.AIR) {
+                                chunk.setBlock(x + lx, height + 3 + ly, z + lz, BLOCK_TYPES.LEAVES);
+                            }
+                        }
+                    }
+                }
+                chunk.setBlock(x, height + 5, z, BLOCK_TYPES.LEAVES);
+            }
+        }
+    }
+
     return chunk;
 }
 
@@ -554,6 +654,37 @@ document.addEventListener('mousedown', (e) => {
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const raycaster = new THREE.Raycaster();
+const selectionBoxGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const selectionBoxMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.5
+});
+const selectionBox = new THREE.Mesh(selectionBoxGeometry, selectionBoxMaterial);
+selectionBox.raycast = () => null; // Don't let the selection box interfere with raycasting
+scene.add(selectionBox);
+
+function updateSelectionBox() {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(scene.children, true);
+
+    if (intersects.length > 0 && intersects[0].distance <= 5) {
+        const intersect = intersects[0];
+        const pos = intersect.point.clone();
+        pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
+
+        selectionBox.position.set(
+            Math.floor(pos.x) + 0.5,
+            Math.floor(pos.y) + 0.5,
+            Math.floor(pos.z) + 0.5
+        );
+        selectionBox.visible = true;
+    } else {
+        selectionBox.visible = false;
+    }
+}
+
 function performAction(action) {
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
     const intersects = raycaster.intersectObjects(scene.children, true);
@@ -678,6 +809,8 @@ function animate() {
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
+    updateEnvironment();
+    updateSelectionBox();
     renderer.render(scene, camera);
 }
 
