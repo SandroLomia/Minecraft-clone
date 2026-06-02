@@ -15,6 +15,14 @@ const GRAVITY = -0.015;
 const JUMP_FORCE = 0.2;
 const MOVE_SPEED = 0.1;
 
+// Environment constants
+const DAY_DURATION = 24000;
+let gameTime = 6000; // Start at morning
+
+const envDayColor = new THREE.Color(0x87CEEB);
+const envNightColor = new THREE.Color(0x000011);
+const envDuskColor = new THREE.Color(0xffa500);
+
 const BLOCK_TYPES = {
     AIR: 0,
     GRASS: 1,
@@ -95,9 +103,32 @@ function createBlockTexture(blockType, color) {
             ctx.fillRect(0, y, 16, 2);
         }
     } else if (blockType === BLOCK_TYPES.WOOD) {
-        for (let y = 0; y < 16; y += 3) {
-            ctx.fillStyle = adjustHexColor(color, y % 6 === 0 ? 18 : -12);
-            ctx.fillRect(0, y, 16, 1);
+        // Vertical grain pattern for wood log sides
+        for (let x = 0; x < 16; x++) {
+            for (let y = 0; y < 16; y++) {
+                const grain = textureNoise.noise2D(x * 0.1, y * 0.4);
+                const shade = grain * 15 + (x % 4 === 0 ? -10 : 0);
+                paintPixel(x, y, shade);
+            }
+        }
+        // Darker borders
+        ctx.fillStyle = 'rgba(0,0,0,0.15)';
+        ctx.fillRect(0, 0, 1, 16);
+        ctx.fillRect(15, 0, 1, 16);
+    } else if (blockType === BLOCK_TYPES.LEAVES) {
+        // Leafy pattern with some transparency
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 0.5, y * 0.5);
+                if (noise > 0.2) {
+                    paintPixel(x, y, 10 + noise * 20);
+                } else if (noise > -0.2) {
+                    paintPixel(x, y, -10 + noise * 20);
+                } else {
+                    // Transparent holes in leaves
+                    ctx.clearRect(x, y, 1, 1);
+                }
+            }
         }
     } else if (blockType === BLOCK_TYPES.SAND) {
         for (let y = 0; y < 16; y++) {
@@ -208,6 +239,88 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
 
+function updateEnvironment() {
+    gameTime = (gameTime + 1) % DAY_DURATION;
+    const timeRatio = gameTime / DAY_DURATION;
+
+    // Sun position
+    const sunAngle = timeRatio * Math.PI * 2 - Math.PI / 2;
+    directionalLight.position.set(
+        Math.cos(sunAngle) * 100,
+        Math.sin(sunAngle) * 100,
+        50
+    );
+
+    // Sky and fog color
+    let skyColor;
+    let intensity;
+    let ambientIntensity;
+
+    if (timeRatio > 0.25 && timeRatio < 0.75) {
+        // Day
+        const dayProgress = Math.sin((timeRatio - 0.25) * 2 * Math.PI);
+        skyColor = envDayColor.clone().lerp(envDuskColor, 1 - dayProgress);
+        intensity = 0.8;
+        ambientIntensity = 0.6;
+    } else {
+        // Night
+        skyColor = envNightColor;
+        intensity = 0.1;
+        ambientIntensity = 0.1;
+    }
+
+    if (scene.fog) {
+        scene.fog.color.copy(skyColor);
+    }
+    scene.background.copy(skyColor);
+    directionalLight.intensity = intensity;
+    ambientLight.intensity = ambientIntensity;
+}
+
+// Selection Box
+const selectionGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const selectionMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.5
+});
+const selectionBox = new THREE.Mesh(selectionGeometry, selectionMaterial);
+selectionBox.raycast = () => null; // Don't let the selection box interfere with raycasting
+scene.add(selectionBox);
+
+// Particles
+const particles = [];
+const particleGeometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+const particleMaterials = {};
+
+function spawnParticles(x, y, z, blockType) {
+    const color = BLOCK_COLORS[blockType] || 0xffffff;
+    if (!particleMaterials[blockType]) {
+        particleMaterials[blockType] = new THREE.MeshLambertMaterial({
+            map: BLOCK_TEXTURES[blockType],
+            color: color
+        });
+    }
+
+    for (let i = 0; i < 8; i++) {
+        const particle = new THREE.Mesh(particleGeometry, particleMaterials[blockType]);
+        particle.position.set(
+            x + 0.5 + (Math.random() - 0.5) * 0.5,
+            y + 0.5 + (Math.random() - 0.5) * 0.5,
+            z + 0.5 + (Math.random() - 0.5) * 0.5
+        );
+        particle.userData.velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.1,
+            Math.random() * 0.1 + 0.05,
+            (Math.random() - 0.5) * 0.1
+        );
+        particle.userData.life = 1.0;
+        scene.add(particle);
+        particles.push(particle);
+    }
+}
+
 class Chunk {
     constructor(x, z) {
         this.x = x;
@@ -240,6 +353,8 @@ const simplex = new SimplexNoise();
 
 function generateTerrain(chunkX, chunkZ) {
     const chunk = new Chunk(chunkX, chunkZ);
+    const surfaceHeights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const worldX = chunkX * CHUNK_SIZE + x;
@@ -247,6 +362,7 @@ function generateTerrain(chunkX, chunkZ) {
             const elevationNoise = simplex.noise2D(worldX * 0.05, worldZ * 0.05);
             const roughnessNoise = simplex.noise2D(worldX * 0.11, worldZ * 0.11);
             const height = Math.floor((elevationNoise + 1) * 4 + roughnessNoise * 1.5) + 5;
+            surfaceHeights[x + z * CHUNK_SIZE] = height;
             const isBeach = height <= 6;
 
             for (let y = 0; y < CHUNK_HEIGHT; y++) {
@@ -256,12 +372,41 @@ function generateTerrain(chunkX, chunkZ) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.DIRT);
                 } else if (y === height - 1) {
                     chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
-                } else {
-                    chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
                 }
             }
         }
     }
+
+    // Procedural trees
+    for (let x = 2; x < CHUNK_SIZE - 2; x++) {
+        for (let z = 2; z < CHUNK_SIZE - 2; z++) {
+            const worldX = chunkX * CHUNK_SIZE + x;
+            const worldZ = chunkZ * CHUNK_SIZE + z;
+            const height = surfaceHeights[x + z * CHUNK_SIZE];
+
+            // Don't spawn on sand or if too low/high
+            if (height > 6 && height < CHUNK_HEIGHT - 6) {
+                const treeNoise = simplex.noise2D(worldX * 0.5 + 100, worldZ * 0.5 + 100);
+                if (treeNoise > 0.8) {
+                    // Trunk
+                    for (let th = 0; th < 3; th++) {
+                        chunk.setBlock(x, height + th, z, BLOCK_TYPES.WOOD);
+                    }
+                    // Leaves
+                    for (let lx = -1; lx <= 1; lx++) {
+                        for (let lz = -1; lz <= 1; lz++) {
+                            for (let ly = 2; ly <= 3; ly++) {
+                                if (lx === 0 && lz === 0 && ly === 2) continue; // Skip trunk position
+                                chunk.setBlock(x + lx, height + ly, z + lz, BLOCK_TYPES.LEAVES);
+                            }
+                        }
+                    }
+                    chunk.setBlock(x, height + 4, z, BLOCK_TYPES.LEAVES);
+                }
+            }
+        }
+    }
+
     return chunk;
 }
 
@@ -324,8 +469,10 @@ function createChunkMesh(chunk) {
     for (const [blockType, matrices] of Object.entries(instancedMeshes)) {
         const material = new THREE.MeshLambertMaterial({
             map: BLOCK_TEXTURES[blockType],
-            transparent: blockType == BLOCK_TYPES.GLASS,
-            opacity: blockType == BLOCK_TYPES.GLASS ? 0.6 : 1
+            transparent: blockType == BLOCK_TYPES.GLASS || blockType == BLOCK_TYPES.LEAVES,
+            opacity: blockType == BLOCK_TYPES.GLASS ? 0.6 : 1,
+            alphaTest: blockType == BLOCK_TYPES.LEAVES ? 0.5 : 0,
+            side: blockType == BLOCK_TYPES.LEAVES ? THREE.DoubleSide : THREE.FrontSide
         });
         const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
         for (let i = 0; i < matrices.length; i++) {
@@ -429,7 +576,7 @@ let isGrounded = false;
 let selectedBlock = BLOCK_TYPES.STONE;
 
 const inventoryUI = document.getElementById('inventory');
-const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS];
+const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.LEAVES, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS];
 
 inventoryBlocks.forEach(type => {
     const slot = document.createElement('div');
@@ -569,8 +716,12 @@ function performAction(action) {
             const x = Math.floor(pos.x);
             const y = Math.floor(pos.y);
             const z = Math.floor(pos.z);
-            updateBlock(x, y, z, BLOCK_TYPES.AIR);
-            playSound('break');
+            const blockType = getBlockAt(x, y, z);
+            if (blockType !== BLOCK_TYPES.AIR) {
+                spawnParticles(x, y, z, blockType);
+                updateBlock(x, y, z, BLOCK_TYPES.AIR);
+                playSound('break');
+            }
         } else if (action === 'place') {
             pos.add(intersect.face.normal.clone().multiplyScalar(0.5));
             const x = Math.floor(pos.x);
@@ -616,9 +767,12 @@ function handleMovement() {
         direction.set(joystickVector.x, 0, joystickVector.y);
     }
 
+    const isSprinting = keys['ShiftLeft'] || keys['ShiftRight'];
+    const currentSpeed = isSprinting ? MOVE_SPEED * 1.6 : MOVE_SPEED;
+
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(currentSpeed)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
@@ -677,7 +831,39 @@ function animate() {
     requestAnimationFrame(animate);
     handleMovement();
     updatePhysics();
+    updateEnvironment();
     updateVisibleChunks();
+
+    // Update particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.userData.velocity.y += GRAVITY;
+        p.position.add(p.userData.velocity);
+        p.userData.life -= 0.02;
+        p.scale.setScalar(p.userData.life);
+        if (p.userData.life <= 0) {
+            scene.remove(p);
+            particles.splice(i, 1);
+        }
+    }
+
+    // Update selection box
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(scene.children, true);
+    if (intersects.length > 0 && intersects[0].distance <= 5) {
+        const intersect = intersects[0];
+        const pos = intersect.point.clone();
+        pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
+        selectionBox.position.set(
+            Math.floor(pos.x) + 0.5,
+            Math.floor(pos.y) + 0.5,
+            Math.floor(pos.z) + 0.5
+        );
+        selectionBox.visible = true;
+    } else {
+        selectionBox.visible = false;
+    }
+
     renderer.render(scene, camera);
 }
 
