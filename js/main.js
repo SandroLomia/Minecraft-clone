@@ -107,6 +107,18 @@ function createBlockTexture(blockType, color) {
                 paintPixel(x, y, shade);
             }
         }
+    } else if (blockType === BLOCK_TYPES.LEAVES) {
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 0.8 + 15.5, y * 0.8 + 22.1);
+                const shade = noise > 0.2 ? 15 : (noise < -0.2 ? -15 : 0);
+                paintPixel(x, y, shade);
+                // Occasional "holes" for leaves
+                if (textureNoise.noise2D(x * 2.5, y * 2.5) > 0.6) {
+                    ctx.clearRect(x, y, 1, 1);
+                }
+            }
+        }
     } else if (blockType === BLOCK_TYPES.GLASS) {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
         ctx.fillRect(2, 2, 12, 12);
@@ -118,7 +130,7 @@ function createBlockTexture(blockType, color) {
         ctx.stroke();
     }
 
-    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND) {
+    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND && blockType !== BLOCK_TYPES.LEAVES) {
         for (let i = 0; i < 80; i++) {
             const x = Math.floor(Math.random() * 16);
             const y = Math.floor(Math.random() * 16);
@@ -150,6 +162,16 @@ scene.fog = new THREE.Fog(0x87CEEB, 1, RENDER_DISTANCE * CHUNK_SIZE * 1.5);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(CHUNK_SIZE / 2, CHUNK_HEIGHT, CHUNK_SIZE / 2);
 camera.rotation.order = 'YXZ';
+
+// Selection Box
+const selectionGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+const selectionBox = new THREE.LineSegments(
+    new THREE.EdgesGeometry(selectionGeometry),
+    new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 })
+);
+selectionBox.visible = false;
+selectionBox.raycast = () => null; // Don't raycast against the selection box
+scene.add(selectionBox);
 
 // Sound system
 function createOscillatorSound(frequency, duration, type = 'sine', gain = 0.07, attack = 0.005) {
@@ -200,13 +222,58 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.getElementById('game-container').appendChild(renderer.domElement);
 
-// Lighting
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+// Lighting & Environment
+let gameTime = 6000; // Start at morning
+const DAY_DURATION = 24000;
+
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
 scene.add(ambientLight);
 
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-directionalLight.position.set(100, 100, 50);
+directionalLight.position.set(1, 1, 1);
 scene.add(directionalLight);
+
+const envDayColor = new THREE.Color(0x87CEEB);
+const envNightColor = new THREE.Color(0x000011);
+const envDuskColor = new THREE.Color(0xffa500);
+
+function updateEnvironment() {
+    gameTime = (gameTime + 1) % DAY_DURATION;
+    const timeRatio = gameTime / DAY_DURATION;
+
+    // Sun position
+    const sunAngle = timeRatio * Math.PI * 2 - Math.PI / 2;
+    directionalLight.position.set(
+        Math.cos(sunAngle) * 100,
+        Math.sin(sunAngle) * 100,
+        50
+    );
+
+    // Light intensities and colors
+    let intensity = 0;
+    let targetColor;
+
+    if (timeRatio > 0.25 && timeRatio < 0.75) {
+        // Day
+        intensity = 0.8;
+        targetColor = envDayColor;
+        ambientLight.intensity = 0.4;
+    } else if (timeRatio < 0.2 || timeRatio > 0.8) {
+        // Night
+        intensity = 0.1;
+        targetColor = envNightColor;
+        ambientLight.intensity = 0.1;
+    } else {
+        // Sunrise/Sunset transitions
+        intensity = 0.4;
+        targetColor = envDuskColor;
+        ambientLight.intensity = 0.2;
+    }
+
+    directionalLight.intensity = intensity;
+    scene.background = targetColor;
+    if (scene.fog) scene.fog.color.copy(targetColor);
+}
 
 class Chunk {
     constructor(x, z) {
@@ -258,6 +325,44 @@ function generateTerrain(chunkX, chunkZ) {
                     chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
                 } else {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
+                }
+            }
+        }
+    }
+
+    // Procedural trees
+    for (let x = 2; x < CHUNK_SIZE - 2; x++) {
+        for (let z = 2; z < CHUNK_SIZE - 2; z++) {
+            const worldX = chunkX * CHUNK_SIZE + x;
+            const worldZ = chunkZ * CHUNK_SIZE + z;
+
+            // Tree noise
+            const treeNoise = simplex.noise2D(worldX * 0.5, worldZ * 0.5);
+
+            if (treeNoise > 0.8) {
+                // Find ground level
+                let groundY = -1;
+                for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+                    if (chunk.getBlock(x, y, z) === BLOCK_TYPES.GRASS) {
+                        groundY = y;
+                        break;
+                    }
+                }
+
+                if (groundY !== -1 && groundY < CHUNK_HEIGHT - 6) {
+                    // Plant tree
+                    for (let h = 1; h <= 3; h++) {
+                        chunk.setBlock(x, groundY + h, z, BLOCK_TYPES.WOOD);
+                    }
+                    // Canopy
+                    for (let lx = -1; lx <= 1; lx++) {
+                        for (let lz = -1; lz <= 1; lz++) {
+                            for (let ly = 3; ly <= 4; ly++) {
+                                if (lx === 0 && lz === 0 && ly === 3) continue;
+                                chunk.setBlock(x + lx, groundY + ly, z + lz, BLOCK_TYPES.LEAVES);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -324,8 +429,10 @@ function createChunkMesh(chunk) {
     for (const [blockType, matrices] of Object.entries(instancedMeshes)) {
         const material = new THREE.MeshLambertMaterial({
             map: BLOCK_TEXTURES[blockType],
-            transparent: blockType == BLOCK_TYPES.GLASS,
-            opacity: blockType == BLOCK_TYPES.GLASS ? 0.6 : 1
+            transparent: blockType == BLOCK_TYPES.GLASS || blockType == BLOCK_TYPES.LEAVES,
+            opacity: blockType == BLOCK_TYPES.GLASS ? 0.6 : 1,
+            alphaTest: blockType == BLOCK_TYPES.LEAVES ? 0.5 : 0,
+            side: blockType == BLOCK_TYPES.LEAVES ? THREE.DoubleSide : THREE.FrontSide
         });
         const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
         for (let i = 0; i < matrices.length; i++) {
@@ -429,7 +536,7 @@ let isGrounded = false;
 let selectedBlock = BLOCK_TYPES.STONE;
 
 const inventoryUI = document.getElementById('inventory');
-const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS];
+const inventoryBlocks = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.WOOD, BLOCK_TYPES.SAND, BLOCK_TYPES.GLASS, BLOCK_TYPES.LEAVES];
 
 inventoryBlocks.forEach(type => {
     const slot = document.createElement('div');
@@ -672,12 +779,36 @@ function updatePhysics() {
     camera.position.copy(nextPos);
 }
 
+const _tempVec = new THREE.Vector3();
+function updateSelectionBox() {
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(scene.children, true);
+
+    if (intersects.length > 0) {
+        const intersect = intersects[0];
+        if (intersect.distance <= 5) {
+            _tempVec.copy(intersect.point);
+            _tempVec.addScaledVector(intersect.face.normal, -0.5);
+            selectionBox.position.set(
+                Math.floor(_tempVec.x) + 0.5,
+                Math.floor(_tempVec.y) + 0.5,
+                Math.floor(_tempVec.z) + 0.5
+            );
+            selectionBox.visible = true;
+            return;
+        }
+    }
+    selectionBox.visible = false;
+}
+
 // Basic game loop
 function animate() {
     requestAnimationFrame(animate);
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
+    updateSelectionBox();
+    updateEnvironment();
     renderer.render(scene, camera);
 }
 
