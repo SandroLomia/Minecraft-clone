@@ -1,97 +1,187 @@
+:root {
+    --gold: #ffd166;
+    --mint: #74f2ce;
+    --panel: rgba(8, 16, 28, 0.62);
+}
+
+* { box-sizing: border-box; }
+
 body {
     margin: 0;
     overflow: hidden;
-    background-color: #87CEEB; /* Sky blue */
-    font-family: Arial, sans-serif;
+    background: radial-gradient(circle at 50% 15%, #d7f6ff 0%, #83c9ff 38%, #315f9f 100%);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     touch-action: none;
+    color: white;
 }
 
-#game-container {
+#game-container,
+#ui-container,
+#overlay {
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
+    inset: 0;
+}
+
+#game-container canvas {
+    display: block;
+    filter: saturate(1.08) contrast(1.04);
 }
 
 #overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0,0,0,0.7);
-    color: white;
+    background:
+        linear-gradient(135deg, rgba(7, 12, 24, 0.9), rgba(17, 61, 80, 0.55)),
+        radial-gradient(circle at 20% 20%, rgba(116, 242, 206, 0.35), transparent 28%),
+        radial-gradient(circle at 80% 70%, rgba(255, 209, 102, 0.24), transparent 32%);
     display: flex;
-    flex-direction: column;
     justify-content: center;
     align-items: center;
     z-index: 100;
     cursor: pointer;
     text-align: center;
+    padding: 24px;
+    backdrop-filter: blur(7px);
 }
 
-#ui-container {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
+.title-card {
+    width: min(760px, 92vw);
+    padding: clamp(28px, 6vw, 64px);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 32px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.05));
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35), inset 0 1px rgba(255,255,255,0.24);
 }
+
+.eyebrow {
+    color: var(--mint);
+    text-transform: uppercase;
+    letter-spacing: 0.38em;
+    font-weight: 800;
+    font-size: 0.82rem;
+}
+
+h1 {
+    margin: 14px 0;
+    font-size: clamp(2.6rem, 7vw, 6rem);
+    line-height: 0.9;
+    text-shadow: 0 7px 0 rgba(0,0,0,0.18);
+}
+
+.lede, .controls {
+    color: rgba(255,255,255,0.84);
+    font-size: clamp(1rem, 2vw, 1.25rem);
+}
+
+#play-button {
+    margin: 22px 0 8px;
+    padding: 14px 30px;
+    border: 0;
+    border-radius: 999px;
+    color: #14213d;
+    font-weight: 900;
+    font-size: 1rem;
+    background: linear-gradient(135deg, var(--gold), #ff8fab);
+    box-shadow: 0 12px 26px rgba(255, 143, 171, 0.35);
+    cursor: pointer;
+}
+
+#ui-container { pointer-events: none; }
+
+#hud {
+    position: absolute;
+    top: 18px;
+    left: 18px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.stat {
+    min-width: 112px;
+    padding: 10px 14px;
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 18px;
+    background: var(--panel);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+}
+
+.stat span {
+    display: block;
+    color: rgba(255,255,255,0.68);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.stat strong { font-size: 0.98rem; }
 
 #crosshair {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 20px;
-    height: 20px;
-    border: 2px solid white;
+    width: 24px;
+    height: 24px;
     transform: translate(-50%, -50%);
 }
 
+#crosshair::before,
+#crosshair::after {
+    content: "";
+    position: absolute;
+    background: rgba(255,255,255,0.9);
+    box-shadow: 0 0 10px rgba(116,242,206,0.85);
+}
+#crosshair::before { width: 2px; height: 24px; left: 11px; }
+#crosshair::after { height: 2px; width: 24px; top: 11px; }
+
 #inventory {
     position: absolute;
-    bottom: 20px;
+    bottom: 22px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     gap: 10px;
+    padding: 10px;
+    border-radius: 22px;
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.16);
     pointer-events: auto;
 }
 
 .inventory-slot {
-    width: 40px;
-    height: 40px;
-    border: 2px solid #555;
-    background-color: rgba(0, 0, 0, 0.5);
+    width: 46px;
+    height: 46px;
+    border: 2px solid rgba(255,255,255,0.22);
+    border-radius: 13px;
     cursor: pointer;
+    box-shadow: inset 0 0 0 4px rgba(0,0,0,0.15);
 }
 
 .inventory-slot.selected {
-    border-color: white;
-    box-shadow: 0 0 10px white;
+    border-color: var(--gold);
+    box-shadow: 0 0 18px rgba(255, 209, 102, 0.85), inset 0 0 0 4px rgba(255,255,255,0.18);
+    transform: translateY(-4px);
 }
 
 #joystick-base {
     position: absolute;
     bottom: 50px;
     left: 50px;
-    width: 100px;
-    height: 100px;
-    background: rgba(255, 255, 255, 0.2);
+    width: 112px;
+    height: 112px;
+    background: rgba(255, 255, 255, 0.18);
+    border: 1px solid rgba(255,255,255,0.22);
     border-radius: 50%;
     pointer-events: auto;
-    display: none; /* Show only on mobile */
+    display: none;
 }
 
 #joystick-handle {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 50px;
-    height: 50px;
-    background: rgba(255, 255, 255, 0.5);
+    width: 54px;
+    height: 54px;
+    background: rgba(116, 242, 206, 0.62);
     border-radius: 50%;
     transform: translate(-50%, -50%);
 }
@@ -100,27 +190,25 @@ body {
     position: absolute;
     bottom: 50px;
     right: 50px;
-    display: none; /* Show only on mobile */
+    display: none;
     flex-direction: column;
     gap: 10px;
     pointer-events: auto;
 }
 
 #mobile-buttons button {
-    width: 60px;
-    height: 60px;
-    background: rgba(255, 255, 255, 0.3);
-    border: none;
+    width: 68px;
+    height: 68px;
+    background: rgba(8, 16, 28, 0.64);
+    border: 1px solid rgba(255,255,255,0.2);
     border-radius: 50%;
     color: white;
-    font-weight: bold;
+    font-weight: 800;
 }
 
 @media (max-width: 768px) {
-    #joystick-base, #mobile-buttons {
-        display: flex;
-    }
-    #crosshair {
-        display: block;
-    }
+    #joystick-base, #mobile-buttons { display: flex; }
+    #hud { top: 10px; left: 10px; right: 10px; }
+    .stat { min-width: 0; flex: 1; }
+    #inventory { bottom: 12px; }
 }

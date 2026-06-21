@@ -3,18 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Minecraft Clone</title>
+    <title>BlockCraft Wilds</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="game-container"></div>
     <div id="overlay">
-        <h1>MINECRAFT CLONE</h1>
-        <p>Click to Play</p>
-        <p>(WASD to move, Space to jump)</p>
-        <p>(Mouse to look, Click to break/place)</p>
+        <div class="title-card">
+            <span class="eyebrow">BlockCraft Wilds</span>
+            <h1>EXPLORE. BUILD. SURVIVE.</h1>
+            <p class="lede">A redesigned voxel sandbox with living animals, glowing particles, richer terrain, ambient sound, and smoother controls.</p>
+            <button id="play-button" type="button">Click to Play</button>
+            <p class="controls">WASD move · Space jump · Mouse look · Left click break · Right click place</p>
+        </div>
     </div>
     <div id="ui-container">
+        <div id="hud">
+            <div class="stat"><span>Biome</span><strong id="biome-label">Meadow</strong></div>
+            <div class="stat"><span>Nearby life</span><strong id="creature-count">0</strong></div>
+            <div class="stat"><span>Tip</span><strong>Build a shelter</strong></div>
+        </div>
         <div id="crosshair"></div>
         <div id="joystick-base">
             <div id="joystick-handle"></div>

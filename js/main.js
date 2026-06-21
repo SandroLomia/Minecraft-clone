@@ -8,6 +8,8 @@ const textureNoise = new SimplexNoise('texture-seed');
 const CHUNK_SIZE = 16;
 const CHUNK_HEIGHT = 16;
 const RENDER_DISTANCE = 3;
+const CREATURE_COUNT = 28;
+const PARTICLE_COUNT = 180;
 
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.4;
@@ -27,7 +29,7 @@ const BLOCK_TYPES = {
 };
 
 const BLOCK_COLORS = {
-    [BLOCK_TYPES.GRASS]: 0x4caf50,
+    [BLOCK_TYPES.GRASS]: 0x55c85a,
     [BLOCK_TYPES.DIRT]: 0x8b4513,
     [BLOCK_TYPES.STONE]: 0x808080,
     [BLOCK_TYPES.WOOD]: 0x5d4037,
@@ -144,8 +146,8 @@ Object.entries(BLOCK_COLORS).forEach(([type, color]) => {
 
 // Scene setup
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87CEEB); // Sky blue
-scene.fog = new THREE.Fog(0x87CEEB, 1, RENDER_DISTANCE * CHUNK_SIZE * 1.5);
+scene.background = new THREE.Color(0x9ad7ff);
+scene.fog = new THREE.FogExp2(0x9ad7ff, 0.018);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(CHUNK_SIZE / 2, CHUNK_HEIGHT, CHUNK_SIZE / 2);
@@ -195,18 +197,31 @@ function playSound(action) {
     }
 }
 
-const renderer = new THREE.WebGLRenderer({ antialias: false });
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
 document.getElementById('game-container').appendChild(renderer.domElement);
 
 // Lighting
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+const ambientLight = new THREE.HemisphereLight(0xbfeaff, 0x4b3426, 0.78);
 scene.add(ambientLight);
 
-const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-directionalLight.position.set(100, 100, 50);
+const directionalLight = new THREE.DirectionalLight(0xfff2c4, 1.15);
+directionalLight.position.set(90, 120, 45);
+directionalLight.castShadow = true;
+directionalLight.shadow.mapSize.set(1024, 1024);
 scene.add(directionalLight);
+
+const sun = new THREE.Mesh(
+    new THREE.SphereGeometry(4, 24, 24),
+    new THREE.MeshBasicMaterial({ color: 0xfff1a8 })
+);
+sun.position.set(62, 78, -48);
+scene.add(sun);
 
 class Chunk {
     constructor(x, z) {
@@ -244,9 +259,10 @@ function generateTerrain(chunkX, chunkZ) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const worldX = chunkX * CHUNK_SIZE + x;
             const worldZ = chunkZ * CHUNK_SIZE + z;
-            const elevationNoise = simplex.noise2D(worldX * 0.05, worldZ * 0.05);
-            const roughnessNoise = simplex.noise2D(worldX * 0.11, worldZ * 0.11);
-            const height = Math.floor((elevationNoise + 1) * 4 + roughnessNoise * 1.5) + 5;
+            const elevationNoise = simplex.noise2D(worldX * 0.045, worldZ * 0.045);
+            const roughnessNoise = simplex.noise2D(worldX * 0.12, worldZ * 0.12);
+            const ridgeNoise = Math.abs(simplex.noise2D(worldX * 0.018 + 90, worldZ * 0.018 - 40));
+            const height = Math.floor((elevationNoise + 1) * 4.4 + roughnessNoise * 1.5 + ridgeNoise * 3) + 4;
             const isBeach = height <= 6;
 
             for (let y = 0; y < CHUNK_HEIGHT; y++) {
@@ -258,6 +274,20 @@ function generateTerrain(chunkX, chunkZ) {
                     chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
                 } else {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.AIR);
+                }
+            }
+
+            const treeNoise = simplex.noise2D(worldX * 0.21 + 12, worldZ * 0.21 - 7);
+            if (!isBeach && height < CHUNK_HEIGHT - 5 && treeNoise > 0.72) {
+                for (let trunk = 0; trunk < 4; trunk++) chunk.setBlock(x, height + trunk, z, BLOCK_TYPES.WOOD);
+                for (let lx = -2; lx <= 2; lx++) {
+                    for (let ly = 2; ly <= 4; ly++) {
+                        for (let lz = -2; lz <= 2; lz++) {
+                            if (Math.abs(lx) + Math.abs(lz) + (ly === 4 ? 1 : 0) < 5) {
+                                chunk.setBlock(x + lx, height + ly, z + lz, BLOCK_TYPES.LEAVES);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -331,6 +361,8 @@ function createChunkMesh(chunk) {
         for (let i = 0; i < matrices.length; i++) {
             mesh.setMatrixAt(i, matrices[i]);
         }
+        mesh.castShadow = blockType != BLOCK_TYPES.GLASS;
+        mesh.receiveShadow = true;
         group.add(mesh);
     }
     chunk.mesh = group;
@@ -411,6 +443,121 @@ function updateVisibleChunks(force = false) {
     createdChunks.forEach(([chunkX, chunkZ]) => {
         rebuildChunkAndNeighbors(chunkX, chunkZ);
     });
+}
+
+
+function getSurfaceHeight(worldX, worldZ) {
+    for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+        const block = getBlockAt(worldX, y, worldZ);
+        if (block !== BLOCK_TYPES.AIR && block !== BLOCK_TYPES.LEAVES) return y + 1;
+    }
+    return 8;
+}
+
+function getBiomeName(x, z) {
+    const height = getSurfaceHeight(Math.floor(x), Math.floor(z));
+    if (height <= 6) return 'Sunny Coast';
+    if (height >= 13) return 'Highlands';
+    return simplex.noise2D(x * 0.025, z * 0.025) > 0.15 ? 'Emerald Woods' : 'Meadow';
+}
+
+function createCloud(x, y, z, scale = 1) {
+    const cloud = new THREE.Group();
+    const material = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.78 });
+    for (let i = 0; i < 5; i++) {
+        const puff = new THREE.Mesh(new THREE.BoxGeometry(3, 1, 2), material);
+        puff.position.set((i - 2) * 1.45, Math.sin(i) * 0.22, (i % 2) * 0.7);
+        puff.scale.setScalar(scale * (0.85 + i * 0.05));
+        cloud.add(puff);
+    }
+    cloud.position.set(x, y, z);
+    cloud.userData.speed = 0.004 + Math.random() * 0.006;
+    scene.add(cloud);
+    return cloud;
+}
+
+const clouds = Array.from({ length: 12 }, (_, i) => createCloud(-60 + i * 14, 24 + Math.random() * 8, -55 + Math.random() * 110, 0.9 + Math.random() * 0.7));
+
+function makeAnimal(type, x, z) {
+    const group = new THREE.Group();
+    const palette = type === 'cow' ? [0xf4ead7, 0x33251f] : type === 'pig' ? [0xff9bb2, 0xffc2d1] : [0xf7f2df, 0x3b2f2f];
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.72, 0.62), new THREE.MeshLambertMaterial({ color: palette[0] }));
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.48, 0.48), new THREE.MeshLambertMaterial({ color: palette[0] }));
+    body.castShadow = head.castShadow = true;
+    body.position.y = 0.55;
+    head.position.set(0.82, 0.72, 0);
+    group.add(body, head);
+    for (const sx of [-0.4, 0.4]) for (const sz of [-0.2, 0.2]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.5, 0.16), new THREE.MeshLambertMaterial({ color: palette[1] }));
+        leg.position.set(sx, 0.05, sz);
+        leg.castShadow = true;
+        group.add(leg);
+    }
+    if (type === 'sheep') {
+        const wool = new THREE.Mesh(new THREE.BoxGeometry(1.38, 0.82, 0.72), new THREE.MeshLambertMaterial({ color: 0xfff8e8 }));
+        wool.position.y = 0.6;
+        wool.castShadow = true;
+        group.add(wool);
+    }
+    group.position.set(x, getSurfaceHeight(x, z), z);
+    group.userData = { type, seed: Math.random() * 100, home: new THREE.Vector3(x, 0, z), speed: 0.006 + Math.random() * 0.006 };
+    scene.add(group);
+    return group;
+}
+
+updateVisibleChunks(true);
+
+const creatureTypes = ['cow', 'pig', 'sheep'];
+const creatures = Array.from({ length: CREATURE_COUNT }, (_, i) => {
+    const x = camera.position.x + (Math.random() - 0.5) * 75;
+    const z = camera.position.z + (Math.random() - 0.5) * 75;
+    return makeAnimal(creatureTypes[i % creatureTypes.length], x, z);
+});
+
+document.getElementById('creature-count').textContent = creatures.length;
+
+const particleGeometry = new THREE.BufferGeometry();
+const particlePositions = new Float32Array(PARTICLE_COUNT * 3);
+for (let i = 0; i < PARTICLE_COUNT; i++) {
+    particlePositions[i * 3] = (Math.random() - 0.5) * 80;
+    particlePositions[i * 3 + 1] = 5 + Math.random() * 16;
+    particlePositions[i * 3 + 2] = (Math.random() - 0.5) * 80;
+}
+particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+const particles = new THREE.Points(particleGeometry, new THREE.PointsMaterial({ color: 0xfff7b8, size: 0.08, transparent: true, opacity: 0.78 }));
+scene.add(particles);
+
+function updateWorldAmbience(time) {
+    sun.position.x = camera.position.x + Math.cos(time * 0.05) * 68;
+    sun.position.z = camera.position.z - 46;
+    clouds.forEach(cloud => {
+        cloud.position.x += cloud.userData.speed;
+        if (cloud.position.x - camera.position.x > 90) cloud.position.x = camera.position.x - 90;
+    });
+    creatures.forEach((creature, index) => {
+        const angle = Math.sin(time * creature.userData.speed + creature.userData.seed) * Math.PI;
+        const wander = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)).multiplyScalar(0.018);
+        creature.position.add(wander);
+        creature.rotation.y = -angle;
+        creature.position.y = getSurfaceHeight(creature.position.x, creature.position.z) + Math.sin(time * 0.003 + index) * 0.035;
+        if (creature.position.distanceTo(camera.position) > 95) {
+            creature.position.x = camera.position.x + (Math.random() - 0.5) * 48;
+            creature.position.z = camera.position.z + (Math.random() - 0.5) * 48;
+        }
+    });
+    const positions = particles.geometry.attributes.position.array;
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        positions[i * 3] += Math.sin(time * 0.001 + i) * 0.002;
+        positions[i * 3 + 1] += 0.006;
+        if (positions[i * 3 + 1] > 22) {
+            positions[i * 3] = (Math.random() - 0.5) * 76;
+            positions[i * 3 + 1] = camera.position.y - 2 + Math.random() * 7;
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 76;
+        }
+    }
+    particles.geometry.attributes.position.needsUpdate = true;
+    particles.position.set(camera.position.x, 0, camera.position.z);
+    document.getElementById('biome-label').textContent = getBiomeName(camera.position.x, camera.position.z);
 }
 
 // Initialize world around player
@@ -673,11 +820,12 @@ function updatePhysics() {
 }
 
 // Basic game loop
-function animate() {
+function animate(time = 0) {
     requestAnimationFrame(animate);
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
+    updateWorldAmbience(time);
     renderer.render(scene, camera);
 }
 
