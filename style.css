@@ -61,16 +61,24 @@ body {
 }
 
 .inventory-slot {
-    width: 40px;
-    height: 40px;
-    border: 2px solid #555;
-    background-color: rgba(0, 0, 0, 0.5);
+    width: 44px;
+    height: 44px;
+    border: 3px solid #333;
+    background-color: rgba(50, 50, 50, 0.7);
     cursor: pointer;
+    box-sizing: border-box;
+    transition: all 0.1s ease;
+}
+
+.inventory-slot:hover {
+    background-color: rgba(100, 100, 100, 0.7);
 }
 
 .inventory-slot.selected {
-    border-color: white;
-    box-shadow: 0 0 10px white;
+    border-color: #fff;
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
+    transform: scale(1.1);
+    z-index: 10;
 }
 
 #joystick-base {
