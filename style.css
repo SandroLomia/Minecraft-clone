@@ -58,6 +58,9 @@ body {
     display: flex;
     gap: 10px;
     pointer-events: auto;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 90vw;
 }
 
 .inventory-slot {
