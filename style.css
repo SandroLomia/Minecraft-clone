@@ -44,10 +44,31 @@ body {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 20px;
-    height: 20px;
-    border: 2px solid white;
+    width: 16px;
+    height: 16px;
     transform: translate(-50%, -50%);
+}
+
+#crosshair::before, #crosshair::after {
+    content: '';
+    position: absolute;
+    background-color: rgba(255, 255, 255, 0.85);
+}
+
+/* Horizontal crosshair bar */
+#crosshair::before {
+    top: 7px;
+    left: 0;
+    width: 16px;
+    height: 2px;
+}
+
+/* Vertical crosshair bar */
+#crosshair::after {
+    top: 0;
+    left: 7px;
+    width: 2px;
+    height: 16px;
 }
 
 #inventory {
@@ -56,21 +77,38 @@ body {
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: 10px;
+    gap: 6px;
     pointer-events: auto;
+    background-color: rgba(40, 40, 40, 0.75);
+    padding: 6px;
+    border: 3px solid #1a1a1a;
+    border-radius: 4px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 }
 
 .inventory-slot {
-    width: 40px;
-    height: 40px;
-    border: 2px solid #555;
-    background-color: rgba(0, 0, 0, 0.5);
+    width: 46px;
+    height: 46px;
+    border: 3px solid #5a5a5a;
+    border-top-color: #3a3a3a;
+    border-left-color: #3a3a3a;
+    background-color: rgba(140, 140, 140, 0.4);
     cursor: pointer;
+    box-sizing: border-box;
+    transition: transform 0.1s ease, border-color 0.1s ease;
+}
+
+.inventory-slot:hover {
+    transform: translateY(-4px);
+    border-color: #bbbbbb;
+    background-color: rgba(200, 200, 200, 0.5);
 }
 
 .inventory-slot.selected {
-    border-color: white;
-    box-shadow: 0 0 10px white;
+    border: 3px solid #ffffff;
+    box-shadow: 0 0 12px #ffffff, inset 0 0 8px rgba(255, 255, 255, 0.6);
+    transform: scale(1.08) translateY(-4px);
+    z-index: 2;
 }
 
 #joystick-base {
