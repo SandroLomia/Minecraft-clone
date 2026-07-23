@@ -169,9 +169,14 @@ function createBlockTexture(blockType, color) {
     const texture = new THREE.CanvasTexture(canvas);
     texture.magFilter = THREE.NearestFilter;
     texture.minFilter = THREE.NearestFilter;
+
+    // Cache the canvas for custom inventory styling
+    BLOCK_CANVASES[blockType] = canvas;
+
     return texture;
 }
 
+const BLOCK_CANVASES = {};
 const BLOCK_TEXTURES = {};
 Object.entries(BLOCK_COLORS).forEach(([type, color]) => {
     BLOCK_TEXTURES[type] = createBlockTexture(Number(type), color);
@@ -275,6 +280,112 @@ function updateEnvironment() {
     );
 }
 
+// Clouds
+const cloudsGroup = new THREE.Group();
+scene.add(cloudsGroup);
+
+const cloudMaterial = new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.6,
+    depthWrite: false
+});
+
+function initClouds() {
+    const cloudGeometry = new THREE.BoxGeometry(12, 2, 12);
+    for (let i = 0; i < 20; i++) {
+        const cloud = new THREE.Mesh(cloudGeometry, cloudMaterial);
+        cloud.position.set(
+            (Math.random() - 0.5) * 300,
+            22,
+            (Math.random() - 0.5) * 300
+        );
+        cloudsGroup.add(cloud);
+    }
+}
+
+function updateClouds() {
+    cloudsGroup.children.forEach(cloud => {
+        cloud.position.x += 0.05;
+        const relativeX = cloud.position.x - camera.position.x;
+        const relativeZ = cloud.position.z - camera.position.z;
+        if (relativeX > 150) cloud.position.x -= 300;
+        if (relativeX < -150) cloud.position.x += 300;
+        if (relativeZ > 150) cloud.position.z -= 300;
+        if (relativeZ < -150) cloud.position.z += 300;
+    });
+}
+
+// Twinkling Starfield
+let starfield;
+let starGeometry;
+const numStars = 1000;
+
+function initStarfield() {
+    starGeometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(numStars * 3);
+    const colors = new Float32Array(numStars * 3);
+
+    for (let i = 0; i < numStars; i++) {
+        const r = 180;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(Math.random());
+
+        positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+        positions[i * 3 + 1] = r * Math.cos(phi);
+        positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+
+        const intensity = 0.5 + Math.random() * 0.5;
+        colors[i * 3] = intensity;
+        colors[i * 3 + 1] = intensity;
+        colors[i * 3 + 2] = intensity;
+    }
+
+    starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    starGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    const starMaterial = new THREE.PointsMaterial({
+        size: 1.5,
+        transparent: true,
+        opacity: 0,
+        sizeAttenuation: true,
+        vertexColors: true
+    });
+
+    starfield = new THREE.Points(starGeometry, starMaterial);
+    scene.add(starfield);
+}
+
+function updateStarfield() {
+    if (!starfield) return;
+    starfield.position.copy(camera.position);
+
+    let starfieldOpacity = 0;
+    if (gameTime < 2000) {
+        starfieldOpacity = 1.0 - (gameTime / 2000);
+    } else if (gameTime < 10000) {
+        starfieldOpacity = 0.0;
+    } else if (gameTime < 12000) {
+        starfieldOpacity = (gameTime - 10000) / 2000;
+    } else if (gameTime < 14000) {
+        starfieldOpacity = 1.0;
+    } else if (gameTime < 22000) {
+        starfieldOpacity = 1.0;
+    } else {
+        starfieldOpacity = 1.0 - (gameTime - 22000) / 2000;
+    }
+    starfield.material.opacity = starfieldOpacity;
+
+    const colorsAttr = starGeometry.getAttribute('color');
+    for (let i = 0; i < numStars; i++) {
+        if (Math.random() < 0.01) {
+            const intensity = 0.4 + Math.random() * 0.6;
+            colorsAttr.setXYZ(i, intensity, intensity, intensity);
+        }
+    }
+    colorsAttr.needsUpdate = true;
+}
+
 const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -287,6 +398,10 @@ scene.add(ambientLight);
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
+
+// Initialize clouds and starfield
+initClouds();
+initStarfield();
 
 // Selection Box
 const selectionBoxGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01));
@@ -583,6 +698,59 @@ window.addEventListener('resize', () => {
 const playerVelocity = new THREE.Vector3();
 let isGrounded = false;
 let selectedBlock = BLOCK_TYPES.STONE;
+let currentPlayerHeight = PLAYER_HEIGHT;
+let isSprinting = false;
+let isCrouching = false;
+
+// Bobbing state
+let bobTimer = 0;
+const bobOffset = new THREE.Vector3(0, 0, 0);
+const currentBob = new THREE.Vector3(0, 0, 0);
+
+function isSolidBlock(type) {
+    return type !== BLOCK_TYPES.AIR && type !== BLOCK_TYPES.WATER;
+}
+
+function checkCollisionAt(x, y, z, height) {
+    const r = PLAYER_RADIUS;
+    const corners = [
+        { x: x - r, z: z - r },
+        { x: x + r, z: z - r },
+        { x: x - r, z: z + r },
+        { x: x + r, z: z + r }
+    ];
+
+    const bottom = y - height;
+    const levels = [bottom + 0.1, bottom + height * 0.5, y - 0.1];
+
+    for (const corner of corners) {
+        for (const levelY of levels) {
+            const block = getBlockAt(corner.x, levelY, corner.z);
+            if (isSolidBlock(block)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function checkGrounded(x, y, z, height) {
+    const r = PLAYER_RADIUS;
+    const corners = [
+        { x: x - r, z: z - r },
+        { x: x + r, z: z - r },
+        { x: x - r, z: z + r },
+        { x: x + r, z: z + r }
+    ];
+    const feetY = y - height - 0.001;
+    for (const corner of corners) {
+        const block = getBlockAt(corner.x, feetY, corner.z);
+        if (isSolidBlock(block)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 const inventoryUI = document.getElementById('inventory');
 const inventoryBlocks = [
@@ -597,16 +765,40 @@ const inventoryBlocks = [
     BLOCK_TYPES.COAL_ORE
 ];
 
-inventoryBlocks.forEach(type => {
+function selectInventorySlot(index) {
+    if (index < 0 || index >= inventoryBlocks.length) return;
+    const type = inventoryBlocks[index];
+    selectedBlock = type;
+
+    document.querySelectorAll('.inventory-slot').forEach((slot, idx) => {
+        if (idx === index) {
+            slot.classList.add('selected');
+        } else {
+            slot.classList.remove('selected');
+        }
+    });
+
+    // Custom high-pitched click/blip sound feedback
+    createOscillatorSound(800, 0.05, 'sine', 0.03, 0.002);
+}
+
+inventoryBlocks.forEach((type, index) => {
     const slot = document.createElement('div');
     slot.className = 'inventory-slot';
-    slot.style.backgroundColor = `#${BLOCK_COLORS[type].toString(16).padStart(6, '0')}`;
+
+    // Set procedural block texture as background
+    if (BLOCK_CANVASES[type]) {
+        slot.style.backgroundImage = `url(${BLOCK_CANVASES[type].toDataURL()})`;
+        slot.style.backgroundSize = 'cover';
+        slot.style.imageRendering = 'pixelated';
+    } else {
+        slot.style.backgroundColor = `#${BLOCK_COLORS[type].toString(16).padStart(6, '0')}`;
+    }
+
     if (type === selectedBlock) slot.classList.add('selected');
 
     slot.onclick = () => {
-        selectedBlock = type;
-        document.querySelectorAll('.inventory-slot').forEach(s => s.classList.remove('selected'));
-        slot.classList.add('selected');
+        selectInventorySlot(index);
     };
 
     inventoryUI.appendChild(slot);
@@ -628,7 +820,17 @@ controls.addEventListener('unlock', () => {
 });
 
 const keys = {};
-document.addEventListener('keydown', (e) => keys[e.code] = true);
+document.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+
+    // Support digit selection 1-9
+    if (e.code.startsWith('Digit')) {
+        const num = parseInt(e.code.replace('Digit', ''));
+        if (num >= 1 && num <= 9) {
+            selectInventorySlot(num - 1);
+        }
+    }
+});
 document.addEventListener('keyup', (e) => keys[e.code] = false);
 
 // Mobile touch state
@@ -694,7 +896,7 @@ document.addEventListener('touchmove', (e) => {
 
 document.getElementById('jump-button').addEventListener('touchstart', (e) => {
     e.preventDefault();
-    if (isGrounded) {
+    if (isGrounded && !isCrouching) {
         playerVelocity.y = JUMP_FORCE;
         isGrounded = false;
         playSound('jump');
@@ -747,10 +949,25 @@ function performAction(action) {
             const x = Math.floor(pos.x);
             const y = Math.floor(pos.y);
             const z = Math.floor(pos.z);
-            // Don't place block where player is standing
-            const playerPos = camera.position.clone();
-            if (Math.floor(playerPos.x) === x && Math.floor(playerPos.z) === z &&
-               (Math.floor(playerPos.y) === y || Math.floor(playerPos.y - 1) === y)) {
+
+            // Don't place block where player is standing (dynamic volume check)
+            const playerMinX = camera.position.x - PLAYER_RADIUS;
+            const playerMaxX = camera.position.x + PLAYER_RADIUS;
+            const playerMinY = camera.position.y - currentPlayerHeight;
+            const playerMaxY = camera.position.y;
+            const playerMinZ = camera.position.z - PLAYER_RADIUS;
+            const playerMaxZ = camera.position.z + PLAYER_RADIUS;
+
+            const blockMinX = x;
+            const blockMaxX = x + 1;
+            const blockMinY = y;
+            const blockMaxY = y + 1;
+            const blockMinZ = z;
+            const blockMaxZ = z + 1;
+
+            if (playerMaxX > blockMinX && playerMinX < blockMaxX &&
+                playerMaxY > blockMinY && playerMinY < blockMaxY &&
+                playerMaxZ > blockMinZ && playerMinZ < blockMaxZ) {
                 return;
             }
             updateBlock(x, y, z, selectedBlock);
@@ -787,60 +1004,89 @@ function handleMovement() {
         direction.set(joystickVector.x, 0, joystickVector.y);
     }
 
+    // Determine states
+    isCrouching = !!(keys['ControlLeft'] || keys['ControlRight']);
+    isSprinting = !isCrouching && !!(keys['ShiftLeft'] || keys['ShiftRight']) && (!!keys['KeyW'] || joystickVector.y < -0.5);
+
+    let speed = MOVE_SPEED;
+    if (isCrouching) {
+        speed *= 0.5;
+    } else if (isSprinting) {
+        speed *= 1.5;
+    }
+
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(speed)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
     playerVelocity.z = direction.z;
 
-    if (keys['Space'] && isGrounded) {
+    if (keys['Space'] && isGrounded && !isCrouching) {
         playerVelocity.y = JUMP_FORCE;
         isGrounded = false;
         playSound('jump');
+    }
+
+    // Smoothly lerp height and camera FOV
+    const prevHeight = currentPlayerHeight;
+    const targetHeight = isCrouching ? 1.4 : 1.8;
+    currentPlayerHeight += (targetHeight - currentPlayerHeight) * 0.15;
+    camera.position.y += (currentPlayerHeight - prevHeight);
+
+    const targetFovValue = isSprinting ? 85 : 75;
+    if (Math.abs(camera.fov - targetFovValue) > 0.01) {
+        camera.fov += (targetFovValue - camera.fov) * 0.15;
+        camera.updateProjectionMatrix();
     }
 }
 
 function updatePhysics() {
     playerVelocity.y += GRAVITY;
 
-    const nextPos = camera.position.clone().add(playerVelocity);
-
-    // Simple collision detection
-    if (getBlockAt(nextPos.x, nextPos.y - PLAYER_HEIGHT, nextPos.z) !== BLOCK_TYPES.AIR) {
-        playerVelocity.y = 0;
-        isGrounded = true;
-        nextPos.y = Math.ceil(nextPos.y - PLAYER_HEIGHT) + PLAYER_HEIGHT;
+    // Apply vertical movement with collision check
+    const nextY = camera.position.y + playerVelocity.y;
+    if (playerVelocity.y < 0) {
+        if (checkGrounded(camera.position.x, nextY, camera.position.z, currentPlayerHeight)) {
+            playerVelocity.y = 0;
+            isGrounded = true;
+            const feetY = nextY - currentPlayerHeight;
+            camera.position.y = Math.ceil(feetY) + currentPlayerHeight;
+        } else {
+            camera.position.y = nextY;
+            isGrounded = false;
+        }
+    } else if (playerVelocity.y > 0) {
+        if (checkCollisionAt(camera.position.x, nextY, camera.position.z, currentPlayerHeight)) {
+            playerVelocity.y = 0;
+            camera.position.y = Math.floor(nextY) - 0.01;
+        } else {
+            camera.position.y = nextY;
+            isGrounded = false;
+        }
     } else {
-        isGrounded = false;
+        isGrounded = checkGrounded(camera.position.x, camera.position.y, camera.position.z, currentPlayerHeight);
     }
 
-    // Horizontal collisions
-    const checkRadius = PLAYER_RADIUS;
-    const playerY = camera.position.y - PLAYER_HEIGHT + 0.1;
-
-    // Check X direction
+    // Apply horizontal movement with independent X and Z collision checks for wall sliding
     if (playerVelocity.x !== 0) {
-        const checkX = nextPos.x + (playerVelocity.x > 0 ? checkRadius : -checkRadius);
-        if (getBlockAt(checkX, playerY, camera.position.z) !== BLOCK_TYPES.AIR ||
-            getBlockAt(checkX, playerY + 1, camera.position.z) !== BLOCK_TYPES.AIR) {
+        const nextX = camera.position.x + playerVelocity.x;
+        if (!checkCollisionAt(nextX, camera.position.y, camera.position.z, currentPlayerHeight)) {
+            camera.position.x = nextX;
+        } else {
             playerVelocity.x = 0;
-            nextPos.x = camera.position.x;
         }
     }
 
-    // Check Z direction
     if (playerVelocity.z !== 0) {
-        const checkZ = nextPos.z + (playerVelocity.z > 0 ? checkRadius : -checkRadius);
-        if (getBlockAt(camera.position.x, playerY, checkZ) !== BLOCK_TYPES.AIR ||
-            getBlockAt(camera.position.x, playerY + 1, checkZ) !== BLOCK_TYPES.AIR) {
+        const nextZ = camera.position.z + playerVelocity.z;
+        if (!checkCollisionAt(camera.position.x, camera.position.y, nextZ, currentPlayerHeight)) {
+            camera.position.z = nextZ;
+        } else {
             playerVelocity.z = 0;
-            nextPos.z = camera.position.z;
         }
     }
-
-    camera.position.copy(nextPos);
 }
 
 function updateSelectionBox() {
@@ -863,12 +1109,62 @@ function updateSelectionBox() {
 // Basic game loop
 function animate() {
     requestAnimationFrame(animate);
+
+    // Subtract previous bob visual offset to prevent coordinate drift
+    camera.position.sub(currentBob);
+
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
     updateSelectionBox();
     updateEnvironment();
+    updateClouds();
+    updateStarfield();
     updateParticles();
+
+    // Determine if player is moving and grounded
+    const isMoving = isGrounded && (Math.abs(playerVelocity.x) > 0.001 || Math.abs(playerVelocity.z) > 0.001);
+    if (isMoving) {
+        let bobSpeed = 0.15;
+        if (isSprinting) {
+            bobSpeed = 0.22;
+        } else if (isCrouching) {
+            bobSpeed = 0.08;
+        }
+        bobTimer += bobSpeed;
+
+        let bobAmpX = 0.05;
+        let bobAmpY = 0.05;
+        if (isSprinting) {
+            bobAmpX = 0.08;
+            bobAmpY = 0.08;
+        } else if (isCrouching) {
+            bobAmpX = 0.02;
+            bobAmpY = 0.02;
+        }
+
+        const targetBobX = Math.sin(bobTimer) * bobAmpX;
+        const targetBobY = Math.abs(Math.sin(bobTimer)) * bobAmpY;
+
+        bobOffset.x += (targetBobX - bobOffset.x) * 0.2;
+        bobOffset.y += (targetBobY - bobOffset.y) * 0.2;
+    } else {
+        bobTimer = 0;
+        bobOffset.x += (0 - bobOffset.x) * 0.2;
+        bobOffset.y += (0 - bobOffset.y) * 0.2;
+    }
+
+    // Compute local offset
+    const localRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    localRight.y = 0;
+    localRight.normalize();
+
+    currentBob.copy(localRight).multiplyScalar(bobOffset.x);
+    currentBob.y += bobOffset.y;
+
+    // Reapply new visual offset
+    camera.position.add(currentBob);
+
     renderer.render(scene, camera);
 }
 
