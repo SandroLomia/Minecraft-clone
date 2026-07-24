@@ -46,8 +46,29 @@ body {
     left: 50%;
     width: 20px;
     height: 20px;
-    border: 2px solid white;
     transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+#crosshair::before, #crosshair::after {
+    content: '';
+    position: absolute;
+    background: white;
+    mix-blend-mode: difference;
+}
+
+#crosshair::before {
+    top: 0;
+    left: 9px;
+    width: 2px;
+    height: 20px;
+}
+
+#crosshair::after {
+    top: 9px;
+    left: 0;
+    width: 20px;
+    height: 2px;
 }
 
 #inventory {
@@ -58,19 +79,32 @@ body {
     display: flex;
     gap: 10px;
     pointer-events: auto;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 8px;
+    border-radius: 6px;
+    border: 2px solid #333;
 }
 
 .inventory-slot {
-    width: 40px;
-    height: 40px;
-    border: 2px solid #555;
-    background-color: rgba(0, 0, 0, 0.5);
+    width: 44px;
+    height: 44px;
+    border: 3px solid #444;
+    background-color: rgba(0, 0, 0, 0.4);
     cursor: pointer;
+    box-sizing: border-box;
+    image-rendering: pixelated;
+    transition: transform 0.12s ease-out, border-color 0.12s, box-shadow 0.12s;
+}
+
+.inventory-slot:hover {
+    transform: scale(1.1);
+    border-color: #888;
 }
 
 .inventory-slot.selected {
-    border-color: white;
-    box-shadow: 0 0 10px white;
+    border-color: #fdd835;
+    box-shadow: 0 0 12px #fdd835;
+    transform: scale(1.15);
 }
 
 #joystick-base {
