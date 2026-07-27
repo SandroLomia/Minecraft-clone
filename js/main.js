@@ -4,6 +4,8 @@ import SimplexNoise from 'https://cdn.skypack.dev/simplex-noise@2.4.0';
 
 const textureNoise = new SimplexNoise('texture-seed');
 
+const BLOCK_CANVASES = {};
+
 // Game constants
 const CHUNK_SIZE = 16;
 const CHUNK_HEIGHT = 16;
@@ -166,6 +168,8 @@ function createBlockTexture(blockType, color) {
     ctx.strokeStyle = 'rgba(0,0,0,0.18)';
     ctx.strokeRect(0, 0, 16, 16);
 
+    BLOCK_CANVASES[blockType] = canvas;
+
     const texture = new THREE.CanvasTexture(canvas);
     texture.magFilter = THREE.NearestFilter;
     texture.minFilter = THREE.NearestFilter;
@@ -228,6 +232,9 @@ function playSound(action) {
         createOscillatorSound(210, 0.12, 'triangle', 0.045, 0.003);
         createOscillatorSound(300, 0.08, 'sine', 0.022, 0.002);
     }
+    if (action === 'ui_click') {
+        createOscillatorSound(520, 0.06, 'sine', 0.02, 0.002);
+    }
 }
 
 const DAY_DURATION = 24000;
@@ -273,6 +280,23 @@ function updateEnvironment() {
         Math.sin(sunAngle) * 100,
         50
     );
+
+    // Keep starfield centered on the player
+    starField.position.copy(camera.position);
+
+    // Compute star opacity
+    let starOpacity = 0;
+    if (gameTime >= 12000 && gameTime < 14000) {
+        starOpacity = (gameTime - 12000) / 2000;
+    } else if (gameTime >= 14000 && gameTime < 22000) {
+        starOpacity = 1;
+    } else if (gameTime >= 22000 && gameTime < 24000) {
+        starOpacity = 1 - (gameTime - 22000) / 2000;
+    }
+
+    // Twinkling effect modulation
+    const twinkle = 0.7 + 0.3 * Math.sin(Date.now() * 0.004);
+    starMaterial.opacity = starOpacity * twinkle;
 }
 
 const renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -287,6 +311,87 @@ scene.add(ambientLight);
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
+
+// Starfield
+const starGeometry = new THREE.BufferGeometry();
+const starCount = 500;
+const starPositions = new Float32Array(starCount * 3);
+
+for (let i = 0; i < starCount; i++) {
+    const r = 150 + Math.random() * 100;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(Math.random() * 2 - 1);
+
+    starPositions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+    starPositions[i * 3 + 1] = Math.abs(r * Math.sin(phi) * Math.sin(theta)); // Mostly above horizon
+    starPositions[i * 3 + 2] = r * Math.cos(phi);
+}
+
+starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+const starMaterial = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 1.5,
+    transparent: true,
+    opacity: 0,
+    sizeAttenuation: false
+});
+const starField = new THREE.Points(starGeometry, starMaterial);
+scene.add(starField);
+
+// Clouds setup
+const clouds = [];
+const cloudGroup = new THREE.Group();
+scene.add(cloudGroup);
+
+const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
+const cloudMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.5,
+    depthWrite: false
+});
+
+const CLOUD_COUNT = 12;
+for (let i = 0; i < CLOUD_COUNT; i++) {
+    const mesh = new THREE.Mesh(cloudGeometry, cloudMaterial);
+
+    const scaleX = 15 + Math.random() * 25;
+    const scaleY = 1.5 + Math.random() * 1.5;
+    const scaleZ = 15 + Math.random() * 25;
+    mesh.scale.set(scaleX, scaleY, scaleZ);
+
+    const posX = (Math.random() - 0.5) * 200;
+    const posY = 22 + (Math.random() - 0.5) * 2;
+    const posZ = (Math.random() - 0.5) * 200;
+    mesh.position.set(posX, posY, posZ);
+
+    mesh.speedX = 0.01 + Math.random() * 0.015;
+
+    cloudGroup.add(mesh);
+    clouds.push(mesh);
+}
+
+function updateClouds() {
+    clouds.forEach(cloud => {
+        cloud.position.x += cloud.speedX;
+
+        const playerX = camera.position.x;
+        const playerZ = camera.position.z;
+        const limit = 150;
+
+        if (cloud.position.x - playerX > limit) {
+            cloud.position.x = playerX - limit;
+        } else if (cloud.position.x - playerX < -limit) {
+            cloud.position.x = playerX + limit;
+        }
+
+        if (cloud.position.z - playerZ > limit) {
+            cloud.position.z = playerZ - limit;
+        } else if (cloud.position.z - playerZ < -limit) {
+            cloud.position.z = playerZ + limit;
+        }
+    });
+}
 
 // Selection Box
 const selectionBoxGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01));
@@ -582,7 +687,13 @@ window.addEventListener('resize', () => {
 // Player state
 const playerVelocity = new THREE.Vector3();
 let isGrounded = false;
+let isSprinting = false;
+let isCrouching = false;
+let currentPlayerHeight = PLAYER_HEIGHT;
 let selectedBlock = BLOCK_TYPES.STONE;
+
+let bobTimer = 0;
+const currentBobOffset = new THREE.Vector3();
 
 const inventoryUI = document.getElementById('inventory');
 const inventoryBlocks = [
@@ -597,16 +708,37 @@ const inventoryBlocks = [
     BLOCK_TYPES.COAL_ORE
 ];
 
-inventoryBlocks.forEach(type => {
+function selectInventorySlot(index) {
+    if (index >= 0 && index < inventoryBlocks.length) {
+        selectedBlock = inventoryBlocks[index];
+        const slots = document.querySelectorAll('.inventory-slot');
+        slots.forEach((slot, i) => {
+            if (i === index) {
+                slot.classList.add('selected');
+            } else {
+                slot.classList.remove('selected');
+            }
+        });
+        playSound('ui_click');
+    }
+}
+
+inventoryBlocks.forEach((type, index) => {
     const slot = document.createElement('div');
     slot.className = 'inventory-slot';
-    slot.style.backgroundColor = `#${BLOCK_COLORS[type].toString(16).padStart(6, '0')}`;
+
+    const canvas = BLOCK_CANVASES[type];
+    if (canvas) {
+        slot.style.backgroundImage = `url(${canvas.toDataURL()})`;
+        slot.style.backgroundSize = 'cover';
+    } else {
+        slot.style.backgroundColor = `#${BLOCK_COLORS[type].toString(16).padStart(6, '0')}`;
+    }
+
     if (type === selectedBlock) slot.classList.add('selected');
 
     slot.onclick = () => {
-        selectedBlock = type;
-        document.querySelectorAll('.inventory-slot').forEach(s => s.classList.remove('selected'));
-        slot.classList.add('selected');
+        selectInventorySlot(index);
     };
 
     inventoryUI.appendChild(slot);
@@ -628,8 +760,33 @@ controls.addEventListener('unlock', () => {
 });
 
 const keys = {};
-document.addEventListener('keydown', (e) => keys[e.code] = true);
+document.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+
+    // Select block with number keys 1-9
+    if (e.code.startsWith('Digit')) {
+        const digit = parseInt(e.code.substring(5));
+        if (digit >= 1 && digit <= 9) {
+            selectInventorySlot(digit - 1);
+        }
+    }
+});
 document.addEventListener('keyup', (e) => keys[e.code] = false);
+
+// Select block with scroll wheel
+window.addEventListener('wheel', (e) => {
+    if (!controls.isLocked) return;
+    const currentIndex = inventoryBlocks.indexOf(selectedBlock);
+    let newIndex = currentIndex;
+    if (e.deltaY > 0) {
+        newIndex = (currentIndex + 1) % inventoryBlocks.length;
+    } else if (e.deltaY < 0) {
+        newIndex = (currentIndex - 1 + inventoryBlocks.length) % inventoryBlocks.length;
+    }
+    if (newIndex !== currentIndex) {
+        selectInventorySlot(newIndex);
+    }
+});
 
 // Mobile touch state
 let joystickVector = new THREE.Vector2();
@@ -747,12 +904,23 @@ function performAction(action) {
             const x = Math.floor(pos.x);
             const y = Math.floor(pos.y);
             const z = Math.floor(pos.z);
-            // Don't place block where player is standing
+
+            // Volume-aware player intersection check
             const playerPos = camera.position.clone();
-            if (Math.floor(playerPos.x) === x && Math.floor(playerPos.z) === z &&
-               (Math.floor(playerPos.y) === y || Math.floor(playerPos.y - 1) === y)) {
+            const playerFeetY = playerPos.y - currentPlayerHeight;
+            const playerHeadY = playerPos.y;
+
+            const playerMinX = playerPos.x - PLAYER_RADIUS;
+            const playerMaxX = playerPos.x + PLAYER_RADIUS;
+            const playerMinZ = playerPos.z - PLAYER_RADIUS;
+            const playerMaxZ = playerPos.z + PLAYER_RADIUS;
+
+            if (x + 1 > playerMinX && x < playerMaxX &&
+                z + 1 > playerMinZ && z < playerMaxZ &&
+                y + 1 > playerFeetY && y < playerHeadY) {
                 return;
             }
+
             updateBlock(x, y, z, selectedBlock);
             playSound('place');
         }
@@ -778,6 +946,16 @@ function handleMovement() {
     const direction = new THREE.Vector3();
     const hasKeyboardInput = keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD'];
 
+    isCrouching = keys['ControlLeft'] || keys['ControlRight'];
+    isSprinting = !isCrouching && (keys['ShiftLeft'] || keys['ShiftRight']) && hasKeyboardInput;
+
+    let currentSpeed = MOVE_SPEED;
+    if (isCrouching) {
+        currentSpeed *= 0.5;
+    } else if (isSprinting) {
+        currentSpeed *= 1.5;
+    }
+
     if (hasKeyboardInput) {
         const frontVector = new THREE.Vector3(0, 0, Number(keys['KeyS'] || 0) - Number(keys['KeyW'] || 0));
         const sideVector = new THREE.Vector3(Number(keys['KeyA'] || 0) - Number(keys['KeyD'] || 0), 0, 0);
@@ -789,42 +967,55 @@ function handleMovement() {
 
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(currentSpeed)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
     playerVelocity.z = direction.z;
 
-    if (keys['Space'] && isGrounded) {
+    if (keys['Space'] && isGrounded && !isCrouching) {
         playerVelocity.y = JUMP_FORCE;
         isGrounded = false;
         playSound('jump');
     }
+
+    // Smooth FOV interpolation based on sprinting
+    const targetFOV = isSprinting ? 85 : 75;
+    if (Math.abs(camera.fov - targetFOV) > 0.01) {
+        camera.fov += (targetFOV - camera.fov) * 0.15;
+        camera.updateProjectionMatrix();
+    }
 }
 
 function updatePhysics() {
+    // Smooth transition of player eye height
+    const targetHeight = isCrouching ? 1.4 : 1.8;
+    currentPlayerHeight += (targetHeight - currentPlayerHeight) * 0.15;
+
     playerVelocity.y += GRAVITY;
 
     const nextPos = camera.position.clone().add(playerVelocity);
 
     // Simple collision detection
-    if (getBlockAt(nextPos.x, nextPos.y - PLAYER_HEIGHT, nextPos.z) !== BLOCK_TYPES.AIR) {
+    if (getBlockAt(nextPos.x, nextPos.y - currentPlayerHeight, nextPos.z) !== BLOCK_TYPES.AIR) {
         playerVelocity.y = 0;
         isGrounded = true;
-        nextPos.y = Math.ceil(nextPos.y - PLAYER_HEIGHT) + PLAYER_HEIGHT;
+        nextPos.y = Math.ceil(nextPos.y - currentPlayerHeight) + currentPlayerHeight;
     } else {
         isGrounded = false;
     }
 
-    // Horizontal collisions
+    // Horizontal collisions using volume awareness
     const checkRadius = PLAYER_RADIUS;
-    const playerY = camera.position.y - PLAYER_HEIGHT + 0.1;
+    const playerFeetY = camera.position.y - currentPlayerHeight;
+    const checkHeightFeet = playerFeetY + 0.1;
+    const checkHeightHead = playerFeetY + currentPlayerHeight - 0.1;
 
     // Check X direction
     if (playerVelocity.x !== 0) {
         const checkX = nextPos.x + (playerVelocity.x > 0 ? checkRadius : -checkRadius);
-        if (getBlockAt(checkX, playerY, camera.position.z) !== BLOCK_TYPES.AIR ||
-            getBlockAt(checkX, playerY + 1, camera.position.z) !== BLOCK_TYPES.AIR) {
+        if (getBlockAt(checkX, checkHeightFeet, camera.position.z) !== BLOCK_TYPES.AIR ||
+            getBlockAt(checkX, checkHeightHead, camera.position.z) !== BLOCK_TYPES.AIR) {
             playerVelocity.x = 0;
             nextPos.x = camera.position.x;
         }
@@ -833,8 +1024,8 @@ function updatePhysics() {
     // Check Z direction
     if (playerVelocity.z !== 0) {
         const checkZ = nextPos.z + (playerVelocity.z > 0 ? checkRadius : -checkRadius);
-        if (getBlockAt(camera.position.x, playerY, checkZ) !== BLOCK_TYPES.AIR ||
-            getBlockAt(camera.position.x, playerY + 1, checkZ) !== BLOCK_TYPES.AIR) {
+        if (getBlockAt(camera.position.x, checkHeightFeet, checkZ) !== BLOCK_TYPES.AIR ||
+            getBlockAt(camera.position.x, checkHeightHead, checkZ) !== BLOCK_TYPES.AIR) {
             playerVelocity.z = 0;
             nextPos.z = camera.position.z;
         }
@@ -863,12 +1054,38 @@ function updateSelectionBox() {
 // Basic game loop
 function animate() {
     requestAnimationFrame(animate);
+
+    // Subtract previous bob offset to do physics on raw coordinates
+    camera.position.sub(currentBobOffset);
+
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
     updateSelectionBox();
     updateEnvironment();
     updateParticles();
+    updateClouds();
+
+    // Calculate view bobbing
+    const isMoving = Math.hypot(playerVelocity.x, playerVelocity.z) > 0.001;
+    const targetBobOffset = new THREE.Vector3();
+
+    if (isGrounded && isMoving) {
+        bobTimer += (isSprinting ? 0.25 : 0.15);
+
+        // Bob up and down and sway side to side
+        const bobX = Math.sin(bobTimer) * (isSprinting ? 0.08 : 0.04);
+        const bobY = Math.abs(Math.cos(bobTimer)) * (isSprinting ? 0.12 : 0.06);
+
+        targetBobOffset.set(bobX, bobY, 0);
+        targetBobOffset.applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
+    } else {
+        bobTimer = 0;
+    }
+
+    currentBobOffset.lerp(targetBobOffset, 0.15);
+    camera.position.add(currentBobOffset);
+
     renderer.render(scene, camera);
 }
 
