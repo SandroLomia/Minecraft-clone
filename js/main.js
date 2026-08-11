@@ -26,7 +26,10 @@ const BLOCK_TYPES = {
     GLASS: 7,
     WATER: 8,
     COAL_ORE: 9,
-    COBBLESTONE: 10
+    COBBLESTONE: 10,
+    RED_FLOWER: 11,
+    YELLOW_FLOWER: 12,
+    TALL_GRASS: 13
 };
 
 const BLOCK_COLORS = {
@@ -39,8 +42,15 @@ const BLOCK_COLORS = {
     [BLOCK_TYPES.GLASS]: 0xffffff,
     [BLOCK_TYPES.WATER]: 0x2196f3,
     [BLOCK_TYPES.COAL_ORE]: 0x424242,
-    [BLOCK_TYPES.COBBLESTONE]: 0x9e9e9e
+    [BLOCK_TYPES.COBBLESTONE]: 0x9e9e9e,
+    [BLOCK_TYPES.RED_FLOWER]: 0xf44336,
+    [BLOCK_TYPES.YELLOW_FLOWER]: 0xffeb3b,
+    [BLOCK_TYPES.TALL_GRASS]: 0x357a38
 };
+
+function isFoliageBlock(type) {
+    return type === BLOCK_TYPES.RED_FLOWER || type === BLOCK_TYPES.YELLOW_FLOWER || type === BLOCK_TYPES.TALL_GRASS;
+}
 
 function clampColor(value) {
     return Math.max(0, Math.min(255, Math.round(value)));
@@ -151,9 +161,56 @@ function createBlockTexture(blockType, color) {
                 ctx.strokeRect(x, y, 4, 4);
             }
         }
+    } else if (blockType === BLOCK_TYPES.RED_FLOWER) {
+        // Transparent canvas with a red flower shape drawn in the middle
+        ctx.clearRect(0, 0, 16, 16);
+        // Green stem
+        ctx.fillStyle = '#388e3c';
+        ctx.fillRect(7, 8, 2, 8);
+        ctx.fillRect(5, 10, 2, 2);
+        ctx.fillRect(9, 11, 2, 2);
+        // Red petals
+        ctx.fillStyle = adjustHexColor(color, 0);
+        ctx.fillRect(6, 4, 4, 4);
+        ctx.fillRect(5, 5, 6, 2);
+        ctx.fillStyle = adjustHexColor(color, 25);
+        ctx.fillRect(7, 3, 2, 1);
+        ctx.fillRect(7, 8, 2, 1);
+        // Yellow center
+        ctx.fillStyle = '#ffeb3b';
+        ctx.fillRect(7, 5, 2, 2);
+    } else if (blockType === BLOCK_TYPES.YELLOW_FLOWER) {
+        ctx.clearRect(0, 0, 16, 16);
+        // Green stem
+        ctx.fillStyle = '#388e3c';
+        ctx.fillRect(7, 8, 2, 8);
+        ctx.fillRect(9, 9, 2, 1);
+        // Yellow petals
+        ctx.fillStyle = adjustHexColor(color, -10);
+        ctx.fillRect(6, 4, 4, 4);
+        ctx.fillRect(5, 5, 6, 2);
+        ctx.fillStyle = adjustHexColor(color, 15);
+        ctx.fillRect(7, 3, 2, 1);
+        ctx.fillRect(7, 8, 2, 1);
+        // Dark center
+        ctx.fillStyle = '#5d4037';
+        ctx.fillRect(7, 5, 2, 2);
+    } else if (blockType === BLOCK_TYPES.TALL_GRASS) {
+        ctx.clearRect(0, 0, 16, 16);
+        ctx.fillStyle = adjustHexColor(color, 10);
+        // Procedural tall grass blade-like shapes
+        for (let x = 2; x < 14; x += 2) {
+            const h = 6 + Math.floor(textureNoise.noise2D(x * 1.5, 3.7) * 4);
+            ctx.fillStyle = adjustHexColor(color, Math.floor(textureNoise.noise2D(x * 0.9, 1.2) * 20));
+            ctx.fillRect(x, 16 - h, 2, h);
+            if (x > 4 && x < 12) {
+                // Slanted side blades
+                ctx.fillRect(x - 1, 16 - h + 2, 1, h - 2);
+            }
+        }
     }
 
-    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND && blockType !== BLOCK_TYPES.LEAVES) {
+    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND && blockType !== BLOCK_TYPES.LEAVES && !isFoliageBlock(blockType)) {
         for (let i = 0; i < 80; i++) {
             const x = Math.floor(Math.random() * 16);
             const y = Math.floor(Math.random() * 16);
@@ -228,44 +285,117 @@ function playSound(action) {
         createOscillatorSound(210, 0.12, 'triangle', 0.045, 0.003);
         createOscillatorSound(300, 0.08, 'sine', 0.022, 0.002);
     }
+    if (action === 'click') {
+        createOscillatorSound(520, 0.05, 'sine', 0.035, 0.002);
+        createOscillatorSound(780, 0.04, 'sine', 0.018, 0.002);
+    }
 }
 
 const DAY_DURATION = 24000;
 let gameTime = 6000;
 
+// Dynamic underwater overlay
+const underwaterOverlay = document.createElement('div');
+underwaterOverlay.id = 'underwater-overlay';
+underwaterOverlay.style.position = 'absolute';
+underwaterOverlay.style.top = '0';
+underwaterOverlay.style.left = '0';
+underwaterOverlay.style.width = '100%';
+underwaterOverlay.style.height = '100%';
+underwaterOverlay.style.backgroundColor = 'rgba(0, 45, 150, 0.4)';
+underwaterOverlay.style.pointerEvents = 'none';
+underwaterOverlay.style.display = 'none';
+underwaterOverlay.style.zIndex = '90';
+document.body.appendChild(underwaterOverlay);
+
+let starfield;
+const starCount = 500;
+
+function createStarfield() {
+    const starGeometry = new THREE.BufferGeometry();
+    const starPositions = new Float32Array(starCount * 3);
+
+    for (let i = 0; i < starCount; i++) {
+        const r = 120 + Math.random() * 40;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+
+        starPositions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+        starPositions[i * 3 + 1] = Math.abs(r * Math.sin(phi) * Math.sin(theta)); // upper dome
+        starPositions[i * 3 + 2] = r * Math.cos(phi);
+    }
+
+    starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+
+    const starMaterial = new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: 0.8,
+        transparent: true,
+        opacity: 0.0,
+        sizeAttenuation: true
+    });
+
+    starfield = new THREE.Points(starGeometry, starMaterial);
+    scene.add(starfield);
+}
+
 function updateEnvironment() {
     gameTime = (gameTime + 1) % DAY_DURATION;
 
     let skyColor, lightIntensity;
+    let starOpacity = 0;
 
     if (gameTime < 2000) { // Sunrise
         const t = gameTime / 2000;
         skyColor = new THREE.Color(0xffad60).lerp(new THREE.Color(0x87CEEB), t);
         lightIntensity = 0.4 + t * 0.4;
+        starOpacity = 0.8 * (1 - t);
     } else if (gameTime < 10000) { // Day
         skyColor = new THREE.Color(0x87CEEB);
         lightIntensity = 0.8;
+        starOpacity = 0;
     } else if (gameTime < 12000) { // Sunset
         const t = (gameTime - 10000) / 2000;
         skyColor = new THREE.Color(0x87CEEB).lerp(new THREE.Color(0xff7043), t);
         lightIntensity = 0.8 - t * 0.4;
+        starOpacity = 0.4 * t;
     } else if (gameTime < 14000) { // Dusk
         const t = (gameTime - 12000) / 2000;
         skyColor = new THREE.Color(0xff7043).lerp(new THREE.Color(0x0a0a1a), t);
         lightIntensity = 0.4 - t * 0.3;
+        starOpacity = 0.4 + 0.4 * t;
     } else if (gameTime < 22000) { // Night
         skyColor = new THREE.Color(0x0a0a1a);
         lightIntensity = 0.1;
+        starOpacity = 0.8;
     } else { // Pre-dawn
         const t = (gameTime - 22000) / 2000;
         skyColor = new THREE.Color(0x0a0a1a).lerp(new THREE.Color(0xffad60), t);
         lightIntensity = 0.1 + t * 0.3;
+        starOpacity = 0.8;
     }
 
-    scene.background.copy(skyColor);
-    scene.fog.color.copy(skyColor);
-    directionalLight.intensity = lightIntensity;
-    ambientLight.intensity = lightIntensity * 0.6 + 0.1;
+    const isCameraSubmerged = getBlockAt(camera.position.x, camera.position.y, camera.position.z) === BLOCK_TYPES.WATER;
+
+    if (isCameraSubmerged) {
+        const waterColor = new THREE.Color(0x002d62);
+        scene.background.copy(waterColor);
+        scene.fog.color.copy(waterColor);
+        scene.fog.near = 0.1;
+        scene.fog.far = 10;
+        directionalLight.intensity = 0.2;
+        ambientLight.intensity = 0.3;
+        underwaterOverlay.style.display = 'block';
+    } else {
+        scene.fog.near = 1;
+        scene.fog.far = RENDER_DISTANCE * CHUNK_SIZE * 1.5;
+        underwaterOverlay.style.display = 'none';
+
+        scene.background.copy(skyColor);
+        scene.fog.color.copy(skyColor);
+        directionalLight.intensity = lightIntensity;
+        ambientLight.intensity = lightIntensity * 0.6 + 0.1;
+    }
 
     const sunAngle = (gameTime / DAY_DURATION) * Math.PI * 2 + Math.PI;
     directionalLight.position.set(
@@ -273,6 +403,13 @@ function updateEnvironment() {
         Math.sin(sunAngle) * 100,
         50
     );
+
+    if (starfield) {
+        starfield.position.copy(camera.position);
+        const twinkle = 0.15 * Math.sin(Date.now() * 0.005);
+        starfield.material.opacity = Math.max(0, starOpacity + twinkle);
+        starfield.material.size = 0.7 + 0.3 * Math.sin(Date.now() * 0.003);
+    }
 }
 
 const renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -287,6 +424,9 @@ scene.add(ambientLight);
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
+
+// Starfield
+createStarfield();
 
 // Selection Box
 const selectionBoxGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01));
@@ -395,9 +535,11 @@ function generateTerrain(chunkX, chunkZ) {
             }
 
             // Trees
+            let treePlaced = false;
             if (!isBeach && height > 6 && x > 1 && x < CHUNK_SIZE - 2 && z > 1 && z < CHUNK_SIZE - 2) {
                 const treeNoise = textureNoise.noise2D(worldX * 0.5, worldZ * 0.5);
                 if (treeNoise > 0.8) {
+                    treePlaced = true;
                     // Trunk
                     for (let ty = 0; ty < 3; ty++) {
                         chunk.setBlock(x, height + ty, z, BLOCK_TYPES.WOOD);
@@ -410,6 +552,21 @@ function generateTerrain(chunkX, chunkZ) {
                                 chunk.setBlock(x + lx, height + 2 + ly, z + lz, BLOCK_TYPES.LEAVES);
                             }
                         }
+                    }
+                }
+            }
+
+            // Flowers and Tall grass
+            if (!isBeach && height > 6 && !treePlaced) {
+                const foliageNoise = textureNoise.noise2D(worldX * 1.5, worldZ * 1.5);
+                if (foliageNoise > 0.5) {
+                    const rand = Math.abs(textureNoise.noise2D(worldX * 3.1 + 5.5, worldZ * 3.1 + 8.8));
+                    if (rand < 0.3) {
+                        chunk.setBlock(x, height, z, BLOCK_TYPES.RED_FLOWER);
+                    } else if (rand < 0.6) {
+                        chunk.setBlock(x, height, z, BLOCK_TYPES.YELLOW_FLOWER);
+                    } else {
+                        chunk.setBlock(x, height, z, BLOCK_TYPES.TALL_GRASS);
                     }
                 }
             }
@@ -432,12 +589,53 @@ function getBlockAt(worldX, worldY, worldZ) {
 }
 
 function isBlockTransparent(type) {
-    return type === BLOCK_TYPES.AIR || type === BLOCK_TYPES.GLASS || type === BLOCK_TYPES.LEAVES || type === BLOCK_TYPES.WATER;
+    return type === BLOCK_TYPES.AIR || type === BLOCK_TYPES.GLASS || type === BLOCK_TYPES.LEAVES || type === BLOCK_TYPES.WATER || isFoliageBlock(type);
 }
 
+// Generate double-plane billboard geometry for foliage to cross each other (looks like Minecraft flower/grass)
+function createFoliageGeometry() {
+    const plane1 = new THREE.PlaneGeometry(1, 1);
+    const plane2 = plane1.clone();
+
+    // Rotate second plane by 90 degrees around Y axis
+    plane2.rotateY(Math.PI / 2);
+
+    // Merge positions and UVs
+    // By creating a non-indexed buffer to avoid element indexing problems
+    const p1NonIndexed = plane1.toNonIndexed();
+    const p2NonIndexed = plane2.toNonIndexed();
+
+    const pos1 = p1NonIndexed.attributes.position.array;
+    const pos2 = p2NonIndexed.attributes.position.array;
+    const uv1 = p1NonIndexed.attributes.uv.array;
+    const uv2 = p2NonIndexed.attributes.uv.array;
+
+    const combinedPos = new Float32Array(pos1.length + pos2.length);
+    combinedPos.set(pos1, 0);
+    combinedPos.set(pos2, pos1.length);
+
+    const combinedUv = new Float32Array(uv1.length + uv2.length);
+    combinedUv.set(uv1, 0);
+    combinedUv.set(uv2, uv1.length);
+
+    const combinedGeom = new THREE.BufferGeometry();
+    combinedGeom.setAttribute('position', new THREE.BufferAttribute(combinedPos, 3));
+    combinedGeom.setAttribute('uv', new THREE.BufferAttribute(combinedUv, 2));
+
+    // Calculate normals
+    combinedGeom.computeVertexNormals();
+
+    // Translate up so its base is at y=0, then center it horizontally
+    combinedGeom.translate(0.5, 0.5, 0.5);
+
+    return combinedGeom;
+}
+
+const foliageGeometry = createFoliageGeometry();
+
 function createChunkMesh(chunk) {
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    geometry.translate(0.5, 0.5, 0.5); // Align mesh with grid
+    const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+    boxGeometry.translate(0.5, 0.5, 0.5); // Align mesh with grid
     const instancedMeshes = {};
 
     for (let x = 0; x < CHUNK_SIZE; x++) {
@@ -476,14 +674,18 @@ function createChunkMesh(chunk) {
     const group = new THREE.Group();
     for (const [blockTypeStr, matrices] of Object.entries(instancedMeshes)) {
         const blockType = parseInt(blockTypeStr);
+        const isFoliage = isFoliageBlock(blockType);
+
         const material = new THREE.MeshLambertMaterial({
             map: BLOCK_TEXTURES[blockType],
-            transparent: blockType === BLOCK_TYPES.GLASS || blockType === BLOCK_TYPES.WATER || blockType === BLOCK_TYPES.LEAVES,
+            transparent: blockType === BLOCK_TYPES.GLASS || blockType === BLOCK_TYPES.WATER || blockType === BLOCK_TYPES.LEAVES || isFoliage,
             opacity: blockType === BLOCK_TYPES.GLASS ? 0.6 : (blockType === BLOCK_TYPES.WATER ? 0.6 : 1),
-            alphaTest: blockType === BLOCK_TYPES.LEAVES ? 0.5 : 0,
-            side: blockType === BLOCK_TYPES.LEAVES ? THREE.DoubleSide : THREE.FrontSide
+            alphaTest: (blockType === BLOCK_TYPES.LEAVES || isFoliage) ? 0.5 : 0,
+            side: (blockType === BLOCK_TYPES.LEAVES || isFoliage) ? THREE.DoubleSide : THREE.FrontSide
         });
-        const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
+
+        const geom = isFoliage ? foliageGeometry : boxGeometry;
+        const mesh = new THREE.InstancedMesh(geom, material, matrices.length);
         for (let i = 0; i < matrices.length; i++) {
             mesh.setMatrixAt(i, matrices[i]);
         }
@@ -584,6 +786,18 @@ const playerVelocity = new THREE.Vector3();
 let isGrounded = false;
 let selectedBlock = BLOCK_TYPES.STONE;
 
+// Advanced movement states
+let currentPlayerHeight = PLAYER_HEIGHT;
+let targetPlayerHeight = PLAYER_HEIGHT;
+let currentFOV = 75;
+let targetFOV = 75;
+let isCrouching = false;
+let isSprinting = false;
+
+// View bobbing state
+let bobTimer = 0;
+const currentBobOffset = new THREE.Vector3();
+
 const inventoryUI = document.getElementById('inventory');
 const inventoryBlocks = [
     BLOCK_TYPES.GRASS,
@@ -597,16 +811,33 @@ const inventoryBlocks = [
     BLOCK_TYPES.COAL_ORE
 ];
 
-inventoryBlocks.forEach(type => {
+function selectInventorySlot(index) {
+    if (index < 0 || index >= inventoryBlocks.length) return;
+    const type = inventoryBlocks[index];
+    if (selectedBlock === type) return;
+    selectedBlock = type;
+
+    // Update UI highlights
+    const slots = document.querySelectorAll('.inventory-slot');
+    slots.forEach((s, idx) => {
+        if (idx === index) {
+            s.classList.add('selected');
+        } else {
+            s.classList.remove('selected');
+        }
+    });
+
+    playSound('click');
+}
+
+inventoryBlocks.forEach((type, index) => {
     const slot = document.createElement('div');
     slot.className = 'inventory-slot';
     slot.style.backgroundColor = `#${BLOCK_COLORS[type].toString(16).padStart(6, '0')}`;
     if (type === selectedBlock) slot.classList.add('selected');
 
     slot.onclick = () => {
-        selectedBlock = type;
-        document.querySelectorAll('.inventory-slot').forEach(s => s.classList.remove('selected'));
-        slot.classList.add('selected');
+        selectInventorySlot(index);
     };
 
     inventoryUI.appendChild(slot);
@@ -628,8 +859,34 @@ controls.addEventListener('unlock', () => {
 });
 
 const keys = {};
-document.addEventListener('keydown', (e) => keys[e.code] = true);
+document.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+
+    // Support Digit1 - Digit9
+    if (e.code.startsWith('Digit')) {
+        const digitVal = parseInt(e.code.replace('Digit', ''));
+        if (digitVal >= 1 && digitVal <= 9) {
+            selectInventorySlot(digitVal - 1);
+        }
+    }
+});
 document.addEventListener('keyup', (e) => keys[e.code] = false);
+
+// Support mouse scroll wheel hotbar selection
+window.addEventListener('wheel', (e) => {
+    if (!controls.isLocked) return;
+
+    let currentSlotIndex = inventoryBlocks.indexOf(selectedBlock);
+    if (currentSlotIndex === -1) currentSlotIndex = 0;
+
+    if (e.deltaY > 0) {
+        currentSlotIndex = (currentSlotIndex + 1) % inventoryBlocks.length;
+    } else if (e.deltaY < 0) {
+        currentSlotIndex = (currentSlotIndex - 1 + inventoryBlocks.length) % inventoryBlocks.length;
+    }
+
+    selectInventorySlot(currentSlotIndex);
+});
 
 // Mobile touch state
 let joystickVector = new THREE.Vector2();
@@ -747,10 +1004,12 @@ function performAction(action) {
             const x = Math.floor(pos.x);
             const y = Math.floor(pos.y);
             const z = Math.floor(pos.z);
-            // Don't place block where player is standing
+            // Don't place block where player is standing (volume check)
             const playerPos = camera.position.clone();
+            const minPlayerY = Math.floor(playerPos.y - currentPlayerHeight);
+            const maxPlayerY = Math.floor(playerPos.y);
             if (Math.floor(playerPos.x) === x && Math.floor(playerPos.z) === z &&
-               (Math.floor(playerPos.y) === y || Math.floor(playerPos.y - 1) === y)) {
+               (y >= minPlayerY && y <= maxPlayerY)) {
                 return;
             }
             updateBlock(x, y, z, selectedBlock);
@@ -775,6 +1034,36 @@ function updateBlock(worldX, worldY, worldZ, type) {
 }
 
 function handleMovement() {
+    // Check key states for sprinting and crouching
+    isSprinting = keys['ShiftLeft'] || keys['ShiftRight'];
+    isCrouching = keys['ControlLeft'] || keys['ControlRight'];
+
+    // Adjust movement speeds and FOV based on states
+    let speed = MOVE_SPEED;
+    if (isSprinting && !isCrouching) {
+        speed = MOVE_SPEED * 1.5;
+        targetFOV = 85;
+    } else if (isCrouching) {
+        speed = MOVE_SPEED * 0.5;
+        targetFOV = 70;
+    } else {
+        targetFOV = 75;
+    }
+
+    // Camera height adjustment for crouching
+    targetPlayerHeight = isCrouching ? 1.4 : PLAYER_HEIGHT;
+
+    // Smooth transition of current player height and FOV using linear interpolation (lerping)
+    const lerpFactor = 0.15;
+    const heightDiff = targetPlayerHeight - currentPlayerHeight;
+    currentPlayerHeight += heightDiff * lerpFactor;
+
+    currentFOV += (targetFOV - currentFOV) * lerpFactor;
+    if (camera.fov !== currentFOV) {
+        camera.fov = currentFOV;
+        camera.updateProjectionMatrix();
+    }
+
     const direction = new THREE.Vector3();
     const hasKeyboardInput = keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD'];
 
@@ -789,42 +1078,72 @@ function handleMovement() {
 
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(speed)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
     playerVelocity.z = direction.z;
 
-    if (keys['Space'] && isGrounded) {
-        playerVelocity.y = JUMP_FORCE;
-        isGrounded = false;
-        playSound('jump');
+    // Check water occupancy
+    const isFeetInWater = getBlockAt(camera.position.x, camera.position.y - currentPlayerHeight + 0.5, camera.position.z) === BLOCK_TYPES.WATER;
+    const isHeadInWater = getBlockAt(camera.position.x, camera.position.y, camera.position.z) === BLOCK_TYPES.WATER;
+    const inWater = isFeetInWater || isHeadInWater;
+
+    if (inWater) {
+        if (keys['Space']) {
+            playerVelocity.y = 0.08; // smooth upward swim velocity
+        }
+    } else {
+        // Restrict jump action if crouching
+        if (keys['Space'] && isGrounded && !isCrouching) {
+            playerVelocity.y = JUMP_FORCE;
+            isGrounded = false;
+            playSound('jump');
+        }
     }
 }
 
+function isBlockSolid(type) {
+    return type !== BLOCK_TYPES.AIR && type !== BLOCK_TYPES.WATER && !isFoliageBlock(type);
+}
+
 function updatePhysics() {
-    playerVelocity.y += GRAVITY;
+    // Check water occupancy for physics modifiers
+    const isFeetInWater = getBlockAt(camera.position.x, camera.position.y - currentPlayerHeight + 0.5, camera.position.z) === BLOCK_TYPES.WATER;
+    const isHeadInWater = getBlockAt(camera.position.x, camera.position.y, camera.position.z) === BLOCK_TYPES.WATER;
+    const inWater = isFeetInWater || isHeadInWater;
+
+    if (inWater) {
+        playerVelocity.y += GRAVITY * 0.25; // reduced buoyancy-like gravity
+        playerVelocity.x *= 0.75;           // water horizontal drag
+        playerVelocity.z *= 0.75;           // water horizontal drag
+        playerVelocity.y *= 0.85;           // water vertical drag
+    } else {
+        playerVelocity.y += GRAVITY;
+    }
 
     const nextPos = camera.position.clone().add(playerVelocity);
 
-    // Simple collision detection
-    if (getBlockAt(nextPos.x, nextPos.y - PLAYER_HEIGHT, nextPos.z) !== BLOCK_TYPES.AIR) {
+    // Dynamic player height check based on crouching state
+    // Simple collision detection - check block footprint using current dynamic player height
+    const bottomBlockType = getBlockAt(nextPos.x, nextPos.y - currentPlayerHeight, nextPos.z);
+    if (isBlockSolid(bottomBlockType)) {
         playerVelocity.y = 0;
         isGrounded = true;
-        nextPos.y = Math.ceil(nextPos.y - PLAYER_HEIGHT) + PLAYER_HEIGHT;
+        nextPos.y = Math.ceil(nextPos.y - currentPlayerHeight) + currentPlayerHeight;
     } else {
         isGrounded = false;
     }
 
     // Horizontal collisions
     const checkRadius = PLAYER_RADIUS;
-    const playerY = camera.position.y - PLAYER_HEIGHT + 0.1;
+    const playerY = camera.position.y - currentPlayerHeight + 0.1;
 
     // Check X direction
     if (playerVelocity.x !== 0) {
         const checkX = nextPos.x + (playerVelocity.x > 0 ? checkRadius : -checkRadius);
-        if (getBlockAt(checkX, playerY, camera.position.z) !== BLOCK_TYPES.AIR ||
-            getBlockAt(checkX, playerY + 1, camera.position.z) !== BLOCK_TYPES.AIR) {
+        if (isBlockSolid(getBlockAt(checkX, playerY, camera.position.z)) ||
+            isBlockSolid(getBlockAt(checkX, playerY + 1, camera.position.z))) {
             playerVelocity.x = 0;
             nextPos.x = camera.position.x;
         }
@@ -833,8 +1152,8 @@ function updatePhysics() {
     // Check Z direction
     if (playerVelocity.z !== 0) {
         const checkZ = nextPos.z + (playerVelocity.z > 0 ? checkRadius : -checkRadius);
-        if (getBlockAt(camera.position.x, playerY, checkZ) !== BLOCK_TYPES.AIR ||
-            getBlockAt(camera.position.x, playerY + 1, checkZ) !== BLOCK_TYPES.AIR) {
+        if (isBlockSolid(getBlockAt(camera.position.x, playerY, checkZ)) ||
+            isBlockSolid(getBlockAt(camera.position.x, playerY + 1, checkZ))) {
             playerVelocity.z = 0;
             nextPos.z = camera.position.z;
         }
@@ -863,12 +1182,67 @@ function updateSelectionBox() {
 // Basic game loop
 function animate() {
     requestAnimationFrame(animate);
+
+    // Subtract the previous frame's visual bob offset to perform pure physics calculations
+    camera.position.sub(currentBobOffset);
+
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
     updateSelectionBox();
     updateEnvironment();
     updateParticles();
+
+    // Compute view bobbing offset based on movement and groundedness
+    const horizontalSpeed = Math.sqrt(playerVelocity.x * playerVelocity.x + playerVelocity.z * playerVelocity.z);
+    let targetX = 0;
+    let targetY = 0;
+
+    if (isGrounded && horizontalSpeed > 0.01) {
+        let bobSpeed = 0.15;
+        if (isSprinting) bobSpeed = 0.22;
+        if (isCrouching) bobSpeed = 0.1;
+
+        bobTimer += bobSpeed;
+
+        let bobAmplitudeX = 0.035;
+        let bobAmplitudeY = 0.05;
+        if (isSprinting) {
+            bobAmplitudeX = 0.05;
+            bobAmplitudeY = 0.07;
+        } else if (isCrouching) {
+            bobAmplitudeX = 0.015;
+            bobAmplitudeY = 0.02;
+        }
+
+        targetX = Math.cos(bobTimer) * bobAmplitudeX;
+        targetY = Math.sin(bobTimer * 2) * bobAmplitudeY;
+    } else {
+        bobTimer = 0;
+    }
+
+    // Smoothly interpolate the 2D offset values
+    const lerpedOffset = new THREE.Vector2(
+        currentBobOffset.x + (targetX - currentBobOffset.x) * 0.15,
+        currentBobOffset.y + (targetY - currentBobOffset.y) * 0.15
+    );
+
+    // Translate horizontal bobbing along camera's right axis, and vertical bobbing along Y axis
+    const rightVector = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    rightVector.y = 0;
+    rightVector.normalize();
+
+    const bobVector = new THREE.Vector3()
+        .copy(rightVector)
+        .multiplyScalar(lerpedOffset.x);
+    bobVector.y = lerpedOffset.y;
+
+    // Apply the visual bob offset for rendering
+    camera.position.add(bobVector);
+
+    // Update currentBobOffset state to match what was applied to camera.position
+    currentBobOffset.copy(bobVector);
+
     renderer.render(scene, camera);
 }
 
