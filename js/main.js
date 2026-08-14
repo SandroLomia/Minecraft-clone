@@ -166,12 +166,15 @@ function createBlockTexture(blockType, color) {
     ctx.strokeStyle = 'rgba(0,0,0,0.18)';
     ctx.strokeRect(0, 0, 16, 16);
 
+    BLOCK_CANVASES[blockType] = canvas;
+
     const texture = new THREE.CanvasTexture(canvas);
     texture.magFilter = THREE.NearestFilter;
     texture.minFilter = THREE.NearestFilter;
     return texture;
 }
 
+const BLOCK_CANVASES = {};
 const BLOCK_TEXTURES = {};
 Object.entries(BLOCK_COLORS).forEach(([type, color]) => {
     BLOCK_TEXTURES[type] = createBlockTexture(Number(type), color);
@@ -295,6 +298,57 @@ const selectionBox = new THREE.LineSegments(selectionBoxGeometry, selectionBoxMa
 selectionBox.geometry.translate(0.5, 0.5, 0.5);
 selectionBox.raycast = () => null; // Don't let the selection box block raycasts
 scene.add(selectionBox);
+
+// Starfield
+const starGeometry = new THREE.BufferGeometry();
+const starCount = 400;
+const starPositions = new Float32Array(starCount * 3);
+
+for (let i = 0; i < starCount * 3; i += 3) {
+    const u = Math.random();
+    const v = Math.random();
+    const theta = u * 2.0 * Math.PI;
+    const phi = Math.acos(2.0 * v - 1.0);
+    const r = 90 + Math.random() * 30;
+    starPositions[i] = r * Math.sin(phi) * Math.cos(theta);
+    starPositions[i+1] = Math.abs(r * Math.sin(phi) * Math.sin(theta));
+    starPositions[i+2] = r * Math.cos(phi);
+}
+
+starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+const starMaterial = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 1.2,
+    transparent: true,
+    opacity: 0,
+    sizeAttenuation: true
+});
+const starfield = new THREE.Points(starGeometry, starMaterial);
+scene.add(starfield);
+
+// Clouds
+const cloudGroup = new THREE.Group();
+const cloudMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.4,
+    depthWrite: false
+});
+const cloudGeometry = new THREE.BoxGeometry(12, 1.2, 8);
+const cloudMeshes = [];
+
+for (let i = 0; i < 15; i++) {
+    const mesh = new THREE.Mesh(cloudGeometry, cloudMaterial);
+    mesh.position.set(
+        (Math.random() - 0.5) * 150,
+        22,
+        (Math.random() - 0.5) * 150
+    );
+    mesh.speed = 0.01 + Math.random() * 0.02;
+    cloudGroup.add(mesh);
+    cloudMeshes.push(mesh);
+}
+scene.add(cloudGroup);
 
 // Particles
 const particles = [];
@@ -433,6 +487,10 @@ function getBlockAt(worldX, worldY, worldZ) {
 
 function isBlockTransparent(type) {
     return type === BLOCK_TYPES.AIR || type === BLOCK_TYPES.GLASS || type === BLOCK_TYPES.LEAVES || type === BLOCK_TYPES.WATER;
+}
+
+function isBlockSolid(type) {
+    return type !== BLOCK_TYPES.AIR && type !== BLOCK_TYPES.WATER;
 }
 
 function createChunkMesh(chunk) {
@@ -583,6 +641,13 @@ window.addEventListener('resize', () => {
 const playerVelocity = new THREE.Vector3();
 let isGrounded = false;
 let selectedBlock = BLOCK_TYPES.STONE;
+let isSprinting = false;
+let isCrouching = false;
+let currentPlayerHeight = PLAYER_HEIGHT;
+let bobTimer = 0;
+const bobOffset = new THREE.Vector3();
+let isInWater = false;
+let isHeadSubmerged = false;
 
 const inventoryUI = document.getElementById('inventory');
 const inventoryBlocks = [
@@ -600,8 +665,21 @@ const inventoryBlocks = [
 inventoryBlocks.forEach(type => {
     const slot = document.createElement('div');
     slot.className = 'inventory-slot';
-    slot.style.backgroundColor = `#${BLOCK_COLORS[type].toString(16).padStart(6, '0')}`;
     if (type === selectedBlock) slot.classList.add('selected');
+
+    const iconCanvas = document.createElement('canvas');
+    iconCanvas.width = 38;
+    iconCanvas.height = 38;
+    const ctx = iconCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    const blockCanvas = BLOCK_CANVASES[type];
+    if (blockCanvas) {
+        ctx.drawImage(blockCanvas, 0, 0, 38, 38);
+    } else {
+        iconCanvas.style.backgroundColor = `#${BLOCK_COLORS[type].toString(16).padStart(6, '0')}`;
+    }
+    slot.appendChild(iconCanvas);
 
     slot.onclick = () => {
         selectedBlock = type;
@@ -694,7 +772,9 @@ document.addEventListener('touchmove', (e) => {
 
 document.getElementById('jump-button').addEventListener('touchstart', (e) => {
     e.preventDefault();
-    if (isGrounded) {
+    if (isInWater) {
+        playerVelocity.y = 0.07;
+    } else if (isGrounded && !isCrouching) {
         playerVelocity.y = JUMP_FORCE;
         isGrounded = false;
         playSound('jump');
@@ -737,7 +817,7 @@ function performAction(action) {
             const z = Math.floor(pos.z);
 
             const blockType = getBlockAt(x, y, z);
-            if (blockType !== BLOCK_TYPES.AIR) {
+            if (blockType !== BLOCK_TYPES.AIR && blockType !== BLOCK_TYPES.WATER) {
                 createParticles(new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5), BLOCK_COLORS[blockType]);
                 updateBlock(x, y, z, BLOCK_TYPES.AIR);
                 playSound('break');
@@ -775,6 +855,20 @@ function updateBlock(worldX, worldY, worldZ, type) {
 }
 
 function handleMovement() {
+    isCrouching = !!(keys['ControlLeft'] || keys['ControlRight']);
+    isSprinting = !!((keys['ShiftLeft'] || keys['ShiftRight']) && keys['KeyW'] && !isCrouching);
+
+    // Smooth transition of player height
+    const targetHeight = isCrouching ? 1.4 : PLAYER_HEIGHT;
+    currentPlayerHeight += (targetHeight - currentPlayerHeight) * 0.15;
+
+    // Smooth transition of FOV
+    const targetFOV = isSprinting ? 85 : 75;
+    if (Math.abs(camera.fov - targetFOV) > 0.01) {
+        camera.fov += (targetFOV - camera.fov) * 0.1;
+        camera.updateProjectionMatrix();
+    }
+
     const direction = new THREE.Vector3();
     const hasKeyboardInput = keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD'];
 
@@ -787,15 +881,19 @@ function handleMovement() {
         direction.set(joystickVector.x, 0, joystickVector.y);
     }
 
+    let speed = MOVE_SPEED;
+    if (isSprinting) speed *= 1.5;
+    else if (isCrouching) speed *= 0.5;
+
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(speed)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
     playerVelocity.z = direction.z;
 
-    if (keys['Space'] && isGrounded) {
+    if (keys['Space'] && isGrounded && !isCrouching && !isInWater) {
         playerVelocity.y = JUMP_FORCE;
         isGrounded = false;
         playSound('jump');
@@ -803,28 +901,48 @@ function handleMovement() {
 }
 
 function updatePhysics() {
-    playerVelocity.y += GRAVITY;
+    const headBlock = getBlockAt(camera.position.x, camera.position.y, camera.position.z);
+    const feetBlock = getBlockAt(camera.position.x, camera.position.y - currentPlayerHeight + 0.1, camera.position.z);
+    isInWater = headBlock === BLOCK_TYPES.WATER || feetBlock === BLOCK_TYPES.WATER;
+    isHeadSubmerged = headBlock === BLOCK_TYPES.WATER;
+
+    if (isInWater) {
+        // Buoyancy / reduced gravity in water
+        playerVelocity.y += GRAVITY * 0.3;
+        playerVelocity.x *= 0.6;
+        playerVelocity.z *= 0.6;
+        if (playerVelocity.y < -0.08) playerVelocity.y = -0.08; // limit sinking speed
+
+        // Swim upwards if holding Space
+        if (keys['Space']) {
+            playerVelocity.y = 0.07;
+        }
+    } else {
+        playerVelocity.y += GRAVITY;
+    }
 
     const nextPos = camera.position.clone().add(playerVelocity);
 
     // Simple collision detection
-    if (getBlockAt(nextPos.x, nextPos.y - PLAYER_HEIGHT, nextPos.z) !== BLOCK_TYPES.AIR) {
+    const footBlockType = getBlockAt(nextPos.x, nextPos.y - currentPlayerHeight, nextPos.z);
+    if (isBlockSolid(footBlockType)) {
         playerVelocity.y = 0;
         isGrounded = true;
-        nextPos.y = Math.ceil(nextPos.y - PLAYER_HEIGHT) + PLAYER_HEIGHT;
+        nextPos.y = Math.ceil(nextPos.y - currentPlayerHeight) + currentPlayerHeight;
     } else {
         isGrounded = false;
     }
 
     // Horizontal collisions
     const checkRadius = PLAYER_RADIUS;
-    const playerY = camera.position.y - PLAYER_HEIGHT + 0.1;
+    const playerBottom = camera.position.y - currentPlayerHeight;
+    const checkHeights = [playerBottom + 0.1, playerBottom + currentPlayerHeight - 0.1];
 
     // Check X direction
     if (playerVelocity.x !== 0) {
         const checkX = nextPos.x + (playerVelocity.x > 0 ? checkRadius : -checkRadius);
-        if (getBlockAt(checkX, playerY, camera.position.z) !== BLOCK_TYPES.AIR ||
-            getBlockAt(checkX, playerY + 1, camera.position.z) !== BLOCK_TYPES.AIR) {
+        const hasCollision = checkHeights.some(h => isBlockSolid(getBlockAt(checkX, h, camera.position.z)));
+        if (hasCollision) {
             playerVelocity.x = 0;
             nextPos.x = camera.position.x;
         }
@@ -833,8 +951,8 @@ function updatePhysics() {
     // Check Z direction
     if (playerVelocity.z !== 0) {
         const checkZ = nextPos.z + (playerVelocity.z > 0 ? checkRadius : -checkRadius);
-        if (getBlockAt(camera.position.x, playerY, checkZ) !== BLOCK_TYPES.AIR ||
-            getBlockAt(camera.position.x, playerY + 1, checkZ) !== BLOCK_TYPES.AIR) {
+        const hasCollision = checkHeights.some(h => isBlockSolid(getBlockAt(camera.position.x, h, checkZ)));
+        if (hasCollision) {
             playerVelocity.z = 0;
             nextPos.z = camera.position.z;
         }
@@ -863,11 +981,81 @@ function updateSelectionBox() {
 // Basic game loop
 function animate() {
     requestAnimationFrame(animate);
+
+    // Subtract previous bob offset to prevent coordinate drift in physics/collisions
+    camera.position.sub(bobOffset);
+
     handleMovement();
     updatePhysics();
+
+    // Calculate view bobbing
+    const isMoving = (playerVelocity.x !== 0 || playerVelocity.z !== 0);
+    const targetBob = new THREE.Vector3();
+
+    if (isMoving && isGrounded) {
+        const speedFactor = isSprinting ? 1.5 : (isCrouching ? 0.5 : 1.0);
+        bobTimer += 0.15 * speedFactor;
+        targetBob.x = Math.sin(bobTimer * 0.5) * 0.04;
+        targetBob.y = Math.sin(bobTimer) * 0.06;
+    } else {
+        bobTimer = 0;
+    }
+
+    // Smoothly interpolate towards target bob
+    bobOffset.lerp(targetBob, 0.15);
+
+    // Reapply bob offset to camera position
+    camera.position.add(bobOffset);
+
     updateVisibleChunks();
     updateSelectionBox();
     updateEnvironment();
+
+    // Underwater visual effect overrides
+    const overlayEl = document.getElementById('underwater-overlay');
+    if (isHeadSubmerged) {
+        if (overlayEl) overlayEl.style.opacity = '1';
+        const waterFogColor = new THREE.Color(0x0a2f96);
+        scene.background.copy(waterFogColor);
+        scene.fog.color.copy(waterFogColor);
+        scene.fog.near = 0.1;
+        scene.fog.far = 8;
+    } else {
+        if (overlayEl) overlayEl.style.opacity = '0';
+        scene.fog.near = 1;
+        scene.fog.far = RENDER_DISTANCE * CHUNK_SIZE * 1.5;
+    }
+
+    // Animate starfield (position centered on player camera, rotate slowly)
+    starfield.position.copy(camera.position);
+    starfield.rotation.y += 0.0001;
+
+    let starOpacity = 0;
+    if (gameTime >= 12000 && gameTime < 14000) {
+        starOpacity = (gameTime - 12000) / 2000;
+    } else if (gameTime >= 14000 && gameTime < 22000) {
+        starOpacity = 1.0;
+    } else if (gameTime >= 22000 && gameTime < 24000) {
+        starOpacity = 1.0 - (gameTime - 22000) / 2000;
+    } else {
+        starOpacity = 0.0;
+    }
+    // Modulate for twinkle effect
+    starMaterial.opacity = starOpacity * (0.6 + Math.sin(Date.now() * 0.004) * 0.4);
+
+    // Animate clouds
+    cloudMeshes.forEach(cloud => {
+        cloud.position.x += cloud.speed;
+        const relativeX = cloud.position.x - camera.position.x;
+        if (relativeX > 100) {
+            cloud.position.x = camera.position.x - 100;
+            cloud.position.z = camera.position.z + (Math.random() - 0.5) * 150;
+        } else if (relativeX < -100) {
+            cloud.position.x = camera.position.x + 100;
+            cloud.position.z = camera.position.z + (Math.random() - 0.5) * 150;
+        }
+    });
+
     updateParticles();
     renderer.render(scene, camera);
 }
