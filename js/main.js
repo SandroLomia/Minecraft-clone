@@ -9,7 +9,9 @@ const CHUNK_SIZE = 16;
 const CHUNK_HEIGHT = 16;
 const RENDER_DISTANCE = 3;
 
-const PLAYER_HEIGHT = 1.8;
+const STANDING_HEIGHT = 1.8;
+const CROUCH_HEIGHT = 1.4;
+let currentPlayerHeight = STANDING_HEIGHT;
 const PLAYER_RADIUS = 0.4;
 const GRAVITY = -0.015;
 const JUMP_FORCE = 0.2;
@@ -185,6 +187,68 @@ scene.fog = new THREE.Fog(0x87CEEB, 1, RENDER_DISTANCE * CHUNK_SIZE * 1.5);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(CHUNK_SIZE / 2, CHUNK_HEIGHT, CHUNK_SIZE / 2);
 camera.rotation.order = 'YXZ';
+scene.add(camera);
+
+// Held Block (1st Person view)
+const heldBlockGroup = new THREE.Group();
+const heldBlockMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.35, 0.35, 0.35),
+    new THREE.MeshLambertMaterial({ map: BLOCK_TEXTURES[BLOCK_TYPES.STONE] })
+);
+heldBlockMesh.position.set(0.4, -0.35, -0.6);
+heldBlockMesh.rotation.set(0.2, -0.4, 0.1);
+heldBlockGroup.add(heldBlockMesh);
+camera.add(heldBlockGroup);
+
+let swingProgress = 0;
+let isSwinging = false;
+let bobTimer = 0;
+
+function triggerSwingAnimation() {
+    isSwinging = true;
+    swingProgress = 0;
+}
+
+function updateHeldBlock(deltaTime) {
+    if (!heldBlockMesh) return;
+
+    if (heldBlockMesh.material.map !== BLOCK_TEXTURES[selectedBlock]) {
+        heldBlockMesh.material.map = BLOCK_TEXTURES[selectedBlock];
+        heldBlockMesh.material.needsUpdate = true;
+    }
+
+    const isMoving = isGrounded && (playerVelocity.x !== 0 || playerVelocity.z !== 0);
+    if (isMoving) {
+        const prevStepCount = Math.floor(bobTimer / Math.PI);
+        bobTimer += deltaTime * (isSprinting ? 14 : 9);
+        const newStepCount = Math.floor(bobTimer / Math.PI);
+        if (newStepCount > prevStepCount) {
+            playSound('footstep');
+        }
+    } else {
+        bobTimer = 0;
+    }
+
+    const bobX = Math.sin(bobTimer) * 0.03;
+    const bobY = Math.abs(Math.cos(bobTimer)) * 0.03;
+
+    let swingAngleX = 0;
+    let swingAngleY = 0;
+
+    if (isSwinging) {
+        swingProgress += deltaTime * 8;
+        if (swingProgress >= 1) {
+            swingProgress = 0;
+            isSwinging = false;
+        }
+        const swingSin = Math.sin(swingProgress * Math.PI);
+        swingAngleX = swingSin * -0.6;
+        swingAngleY = swingSin * 0.4;
+    }
+
+    heldBlockMesh.position.set(0.4 + bobX, -0.35 + bobY, -0.6);
+    heldBlockMesh.rotation.set(0.2 + swingAngleX, -0.4 + swingAngleY, 0.1);
+}
 
 // Sound system
 function createOscillatorSound(frequency, duration, type = 'sine', gain = 0.07, attack = 0.005) {
@@ -228,46 +292,141 @@ function playSound(action) {
         createOscillatorSound(210, 0.12, 'triangle', 0.045, 0.003);
         createOscillatorSound(300, 0.08, 'sine', 0.022, 0.002);
     }
+    if (action === 'footstep') {
+        createOscillatorSound(110 + Math.random() * 30, 0.04, 'triangle', 0.025, 0.001);
+    }
+    if (action === 'splash') {
+        createOscillatorSound(180, 0.15, 'sine', 0.06, 0.005);
+        createOscillatorSound(90, 0.2, 'triangle', 0.04, 0.01);
+    }
+    if (action === 'click') {
+        createOscillatorSound(520, 0.03, 'sine', 0.03, 0.001);
+    }
 }
 
 const DAY_DURATION = 24000;
 let gameTime = 6000;
 
+let wasSubmerged = false;
+
+// Celestial Bodies (Sun and Moon)
+const celestialOrbitRadius = 300;
+const sunGeometry = new THREE.BoxGeometry(24, 24, 24);
+const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xfff0a0 });
+const sunMesh = new THREE.Mesh(sunGeometry, sunMaterial);
+scene.add(sunMesh);
+
+const moonGeometry = new THREE.BoxGeometry(20, 20, 20);
+const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xe0e6ed });
+const moonMesh = new THREE.Mesh(moonGeometry, moonMaterial);
+scene.add(moonMesh);
+
+// Starfield
+const starCount = 600;
+const starGeometry = new THREE.BufferGeometry();
+const starPositions = new Float32Array(starCount * 3);
+
+for (let i = 0; i < starCount; i++) {
+    const u = Math.random();
+    const v = Math.random();
+    const theta = u * 2.0 * Math.PI;
+    const phi = Math.acos(2.0 * v - 1.0);
+    const r = 400;
+
+    starPositions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+    starPositions[i * 3 + 1] = Math.abs(r * Math.cos(phi)) + 10; // Keep above horizon
+    starPositions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+}
+
+starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+const starMaterial = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 2.5,
+    transparent: true,
+    opacity: 0
+});
+const starField = new THREE.Points(starGeometry, starMaterial);
+scene.add(starField);
+
 function updateEnvironment() {
     gameTime = (gameTime + 1) % DAY_DURATION;
 
-    let skyColor, lightIntensity;
+    let skyColor, lightIntensity, starOpacity;
 
     if (gameTime < 2000) { // Sunrise
         const t = gameTime / 2000;
         skyColor = new THREE.Color(0xffad60).lerp(new THREE.Color(0x87CEEB), t);
         lightIntensity = 0.4 + t * 0.4;
+        starOpacity = 0.8 * (1 - t);
     } else if (gameTime < 10000) { // Day
         skyColor = new THREE.Color(0x87CEEB);
         lightIntensity = 0.8;
+        starOpacity = 0;
     } else if (gameTime < 12000) { // Sunset
         const t = (gameTime - 10000) / 2000;
         skyColor = new THREE.Color(0x87CEEB).lerp(new THREE.Color(0xff7043), t);
         lightIntensity = 0.8 - t * 0.4;
+        starOpacity = 0.2 * t;
     } else if (gameTime < 14000) { // Dusk
         const t = (gameTime - 12000) / 2000;
         skyColor = new THREE.Color(0xff7043).lerp(new THREE.Color(0x0a0a1a), t);
         lightIntensity = 0.4 - t * 0.3;
+        starOpacity = 0.2 + t * 0.6;
     } else if (gameTime < 22000) { // Night
         skyColor = new THREE.Color(0x0a0a1a);
         lightIntensity = 0.1;
+        starOpacity = 0.8;
     } else { // Pre-dawn
         const t = (gameTime - 22000) / 2000;
         skyColor = new THREE.Color(0x0a0a1a).lerp(new THREE.Color(0xffad60), t);
         lightIntensity = 0.1 + t * 0.3;
+        starOpacity = 0.8 * (1 - t);
     }
 
     scene.background.copy(skyColor);
-    scene.fog.color.copy(skyColor);
+
+    const underwaterOverlay = document.getElementById('underwater-overlay');
+    const isSubmerged = getBlockAt(camera.position.x, camera.position.y, camera.position.z) === BLOCK_TYPES.WATER;
+
+    if (isSubmerged !== wasSubmerged) {
+        playSound('splash');
+        wasSubmerged = isSubmerged;
+    }
+
+    if (isSubmerged) {
+        const waterFogColor = new THREE.Color(0x104060);
+        scene.fog.color.copy(waterFogColor);
+        scene.fog.near = 0.5;
+        scene.fog.far = 15;
+        if (underwaterOverlay) underwaterOverlay.style.display = 'block';
+    } else {
+        scene.fog.color.copy(skyColor);
+        scene.fog.near = 1;
+        scene.fog.far = RENDER_DISTANCE * CHUNK_SIZE * 1.5;
+        if (underwaterOverlay) underwaterOverlay.style.display = 'none';
+    }
+
     directionalLight.intensity = lightIntensity;
     ambientLight.intensity = lightIntensity * 0.6 + 0.1;
 
     const sunAngle = (gameTime / DAY_DURATION) * Math.PI * 2 + Math.PI;
+    const playerPos = camera.position;
+
+    sunMesh.position.set(
+        playerPos.x + Math.cos(sunAngle) * celestialOrbitRadius,
+        playerPos.y + Math.sin(sunAngle) * celestialOrbitRadius,
+        playerPos.z + 50
+    );
+
+    moonMesh.position.set(
+        playerPos.x + Math.cos(sunAngle + Math.PI) * celestialOrbitRadius,
+        playerPos.y + Math.sin(sunAngle + Math.PI) * celestialOrbitRadius,
+        playerPos.z - 50
+    );
+
+    starField.position.copy(playerPos);
+    starMaterial.opacity = starOpacity;
+
     directionalLight.position.set(
         Math.cos(sunAngle) * 100,
         Math.sin(sunAngle) * 100,
@@ -597,20 +756,54 @@ const inventoryBlocks = [
     BLOCK_TYPES.COAL_ORE
 ];
 
-inventoryBlocks.forEach(type => {
+function selectInventorySlot(index) {
+    if (index < 0 || index >= inventoryBlocks.length) return;
+    selectedBlock = inventoryBlocks[index];
+    const slots = document.querySelectorAll('.inventory-slot');
+    slots.forEach((s, idx) => {
+        if (idx === index) {
+            s.classList.add('selected');
+        } else {
+            s.classList.remove('selected');
+        }
+    });
+    playSound('click');
+}
+
+inventoryBlocks.forEach((type, index) => {
     const slot = document.createElement('div');
     slot.className = 'inventory-slot';
     slot.style.backgroundColor = `#${BLOCK_COLORS[type].toString(16).padStart(6, '0')}`;
     if (type === selectedBlock) slot.classList.add('selected');
 
     slot.onclick = () => {
-        selectedBlock = type;
-        document.querySelectorAll('.inventory-slot').forEach(s => s.classList.remove('selected'));
-        slot.classList.add('selected');
+        selectInventorySlot(index);
     };
 
     inventoryUI.appendChild(slot);
 });
+
+// Keyboard hotbar selection (Digit1..Digit9) & Wheel scroll
+document.addEventListener('keydown', (e) => {
+    if (e.code.startsWith('Digit')) {
+        const digit = parseInt(e.code.replace('Digit', ''), 10);
+        if (digit >= 1 && digit <= inventoryBlocks.length) {
+            selectInventorySlot(digit - 1);
+        }
+    }
+});
+
+window.addEventListener('wheel', (e) => {
+    if (!controls.isLocked) return;
+    const currentIndex = inventoryBlocks.indexOf(selectedBlock);
+    let nextIndex = currentIndex;
+    if (e.deltaY > 0) {
+        nextIndex = (currentIndex + 1) % inventoryBlocks.length;
+    } else if (e.deltaY < 0) {
+        nextIndex = (currentIndex - 1 + inventoryBlocks.length) % inventoryBlocks.length;
+    }
+    selectInventorySlot(nextIndex);
+}, { passive: true });
 
 const controls = new PointerLockControls(camera, document.body);
 const overlay = document.getElementById('overlay');
@@ -730,6 +923,8 @@ function performAction(action) {
 
         const pos = intersect.point.clone();
 
+        triggerSwingAnimation();
+
         if (action === 'break') {
             pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
             const x = Math.floor(pos.x);
@@ -774,9 +969,31 @@ function updateBlock(worldX, worldY, worldZ, type) {
     }
 }
 
+let isSprinting = false;
+let isCrouching = false;
+
 function handleMovement() {
     const direction = new THREE.Vector3();
     const hasKeyboardInput = keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD'];
+
+    isSprinting = !!(keys['ShiftLeft'] || keys['ShiftRight']) && keys['KeyW'];
+    isCrouching = !!(keys['ControlLeft'] || keys['ControlRight']);
+
+    const targetHeight = isCrouching ? CROUCH_HEIGHT : STANDING_HEIGHT;
+    currentPlayerHeight += (targetHeight - currentPlayerHeight) * 0.2;
+
+    let currentSpeed = MOVE_SPEED;
+    if (isSprinting) {
+        currentSpeed *= 1.5;
+    } else if (isCrouching) {
+        currentSpeed *= 0.5;
+    }
+
+    const targetFOV = isSprinting ? 85 : 75;
+    if (Math.abs(camera.fov - targetFOV) > 0.1) {
+        camera.fov += (targetFOV - camera.fov) * 0.1;
+        camera.updateProjectionMatrix();
+    }
 
     if (hasKeyboardInput) {
         const frontVector = new THREE.Vector3(0, 0, Number(keys['KeyS'] || 0) - Number(keys['KeyW'] || 0));
@@ -789,13 +1006,13 @@ function handleMovement() {
 
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(currentSpeed)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
     playerVelocity.z = direction.z;
 
-    if (keys['Space'] && isGrounded) {
+    if (keys['Space'] && isGrounded && !isCrouching) {
         playerVelocity.y = JUMP_FORCE;
         isGrounded = false;
         playSound('jump');
@@ -807,18 +1024,18 @@ function updatePhysics() {
 
     const nextPos = camera.position.clone().add(playerVelocity);
 
-    // Simple collision detection
-    if (getBlockAt(nextPos.x, nextPos.y - PLAYER_HEIGHT, nextPos.z) !== BLOCK_TYPES.AIR) {
+    // Vertical collision detection
+    if (getBlockAt(nextPos.x, nextPos.y - currentPlayerHeight, nextPos.z) !== BLOCK_TYPES.AIR) {
         playerVelocity.y = 0;
         isGrounded = true;
-        nextPos.y = Math.ceil(nextPos.y - PLAYER_HEIGHT) + PLAYER_HEIGHT;
+        nextPos.y = Math.ceil(nextPos.y - currentPlayerHeight) + currentPlayerHeight;
     } else {
         isGrounded = false;
     }
 
     // Horizontal collisions
     const checkRadius = PLAYER_RADIUS;
-    const playerY = camera.position.y - PLAYER_HEIGHT + 0.1;
+    const playerY = camera.position.y - currentPlayerHeight + 0.1;
 
     // Check X direction
     if (playerVelocity.x !== 0) {
@@ -861,14 +1078,20 @@ function updateSelectionBox() {
 }
 
 // Basic game loop
+let lastFrameTime = performance.now();
 function animate() {
     requestAnimationFrame(animate);
+    const now = performance.now();
+    const deltaTime = Math.min((now - lastFrameTime) / 1000, 0.1);
+    lastFrameTime = now;
+
     handleMovement();
     updatePhysics();
     updateVisibleChunks();
     updateSelectionBox();
     updateEnvironment();
     updateParticles();
+    updateHeldBlock(deltaTime);
     renderer.render(scene, camera);
 }
 
