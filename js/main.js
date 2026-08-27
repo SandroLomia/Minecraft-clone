@@ -26,7 +26,10 @@ const BLOCK_TYPES = {
     GLASS: 7,
     WATER: 8,
     COAL_ORE: 9,
-    COBBLESTONE: 10
+    COBBLESTONE: 10,
+    BRICK: 11,
+    IRON_ORE: 12,
+    GOLD_ORE: 13
 };
 
 const BLOCK_COLORS = {
@@ -39,7 +42,10 @@ const BLOCK_COLORS = {
     [BLOCK_TYPES.GLASS]: 0xffffff,
     [BLOCK_TYPES.WATER]: 0x2196f3,
     [BLOCK_TYPES.COAL_ORE]: 0x424242,
-    [BLOCK_TYPES.COBBLESTONE]: 0x9e9e9e
+    [BLOCK_TYPES.COBBLESTONE]: 0x9e9e9e,
+    [BLOCK_TYPES.BRICK]: 0xb23b23,
+    [BLOCK_TYPES.IRON_ORE]: 0xd8af97,
+    [BLOCK_TYPES.GOLD_ORE]: 0xfdce2a
 };
 
 function clampColor(value) {
@@ -150,6 +156,30 @@ function createBlockTexture(blockType, color) {
                 ctx.strokeStyle = 'rgba(0,0,0,0.2)';
                 ctx.strokeRect(x, y, 4, 4);
             }
+        }
+    } else if (blockType === BLOCK_TYPES.BRICK) {
+        ctx.fillStyle = '#b23b23';
+        ctx.fillRect(0, 0, 16, 16);
+        ctx.fillStyle = '#d9c8b4';
+        for (let y = 3; y < 16; y += 4) {
+            ctx.fillRect(0, y, 16, 1);
+        }
+        for (let row = 0; row < 4; row++) {
+            const y = row * 4;
+            const offsetX = row % 2 === 0 ? 7 : 15;
+            ctx.fillRect(offsetX, y, 1, 3);
+            ctx.fillRect((offsetX + 8) % 16, y, 1, 3);
+        }
+    } else if (blockType === BLOCK_TYPES.IRON_ORE || blockType === BLOCK_TYPES.GOLD_ORE) {
+        ctx.fillStyle = adjustHexColor(BLOCK_COLORS[BLOCK_TYPES.STONE], 0);
+        ctx.fillRect(0, 0, 16, 16);
+        const fleckColor = blockType === BLOCK_TYPES.IRON_ORE ? '#d8af97' : '#ffd700';
+        ctx.fillStyle = fleckColor;
+        const spots = blockType === BLOCK_TYPES.IRON_ORE ? 6 : 5;
+        for (let i = 0; i < spots; i++) {
+            const rx = (i * 5 + 3) % 12 + 2;
+            const ry = (i * 7 + 2) % 12 + 2;
+            ctx.fillRect(rx, ry, 2, 2);
         }
     }
 
@@ -273,6 +303,20 @@ function updateEnvironment() {
         Math.sin(sunAngle) * 100,
         50
     );
+
+    if (typeof sunMesh !== 'undefined' && typeof moonMesh !== 'undefined') {
+        const radius = 250;
+        sunMesh.position.set(
+            camera.position.x + Math.cos(sunAngle) * radius,
+            camera.position.y + Math.sin(sunAngle) * radius,
+            camera.position.z + 50
+        );
+        moonMesh.position.set(
+            camera.position.x - Math.cos(sunAngle) * radius,
+            camera.position.y - Math.sin(sunAngle) * radius,
+            camera.position.z - 50
+        );
+    }
 }
 
 const renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -287,6 +331,19 @@ scene.add(ambientLight);
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
+
+// Sun & Moon 3D meshes
+const sunMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(14, 14, 14),
+    new THREE.MeshBasicMaterial({ color: 0xffea00 })
+);
+scene.add(sunMesh);
+
+const moonMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(10, 10, 10),
+    new THREE.MeshBasicMaterial({ color: 0xddddee })
+);
+scene.add(moonMesh);
 
 // Selection Box
 const selectionBoxGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01));
@@ -381,8 +438,19 @@ function generateTerrain(chunkX, chunkZ) {
 
             for (let y = 0; y < CHUNK_HEIGHT; y++) {
                 if (y < height - 4) {
-                    const coalNoise = simplex.noise2D(worldX * 0.2, (y + worldZ) * 0.2);
-                    chunk.setBlock(x, y, z, coalNoise > 0.6 ? BLOCK_TYPES.COAL_ORE : BLOCK_TYPES.STONE);
+                    const oreNoise = simplex.noise2D(worldX * 0.2, (y + worldZ) * 0.2);
+                    const goldNoise = simplex.noise2D(worldX * 0.15 + 100, (y + worldZ) * 0.15 + 100);
+                    const ironNoise = simplex.noise2D(worldX * 0.18 + 50, (y + worldZ) * 0.18 + 50);
+
+                    if (goldNoise > 0.72 && y < height - 7) {
+                        chunk.setBlock(x, y, z, BLOCK_TYPES.GOLD_ORE);
+                    } else if (ironNoise > 0.65) {
+                        chunk.setBlock(x, y, z, BLOCK_TYPES.IRON_ORE);
+                    } else if (oreNoise > 0.6) {
+                        chunk.setBlock(x, y, z, BLOCK_TYPES.COAL_ORE);
+                    } else {
+                        chunk.setBlock(x, y, z, BLOCK_TYPES.STONE);
+                    }
                 } else if (y < height - 1) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.DIRT);
                 } else if (y === height - 1) {
@@ -583,6 +651,8 @@ window.addEventListener('resize', () => {
 const playerVelocity = new THREE.Vector3();
 let isGrounded = false;
 let selectedBlock = BLOCK_TYPES.STONE;
+let bobTimer = 0;
+let bobOffset = new THREE.Vector3();
 
 const inventoryUI = document.getElementById('inventory');
 const inventoryBlocks = [
@@ -590,11 +660,14 @@ const inventoryBlocks = [
     BLOCK_TYPES.DIRT,
     BLOCK_TYPES.STONE,
     BLOCK_TYPES.COBBLESTONE,
+    BLOCK_TYPES.BRICK,
     BLOCK_TYPES.WOOD,
     BLOCK_TYPES.LEAVES,
     BLOCK_TYPES.SAND,
     BLOCK_TYPES.GLASS,
-    BLOCK_TYPES.COAL_ORE
+    BLOCK_TYPES.COAL_ORE,
+    BLOCK_TYPES.IRON_ORE,
+    BLOCK_TYPES.GOLD_ORE
 ];
 
 inventoryBlocks.forEach(type => {
@@ -860,11 +933,30 @@ function updateSelectionBox() {
     selectionBox.visible = false;
 }
 
+// View bobbing logic
+function updateViewBobbing() {
+    // Revert visual bob offset before physics/rendering
+    camera.position.sub(bobOffset);
+
+    const horizontalSpeed = Math.sqrt(playerVelocity.x * playerVelocity.x + playerVelocity.z * playerVelocity.z);
+    if (isGrounded && horizontalSpeed > 0.01) {
+        bobTimer += 0.15;
+        bobOffset.y = Math.sin(bobTimer) * 0.05;
+        bobOffset.x = Math.cos(bobTimer * 0.5) * 0.03;
+    } else {
+        bobTimer = 0;
+        bobOffset.lerp(new THREE.Vector3(0, 0, 0), 0.2);
+    }
+
+    camera.position.add(bobOffset);
+}
+
 // Basic game loop
 function animate() {
     requestAnimationFrame(animate);
     handleMovement();
     updatePhysics();
+    updateViewBobbing();
     updateVisibleChunks();
     updateSelectionBox();
     updateEnvironment();
