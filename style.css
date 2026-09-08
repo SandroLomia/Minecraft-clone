@@ -2,8 +2,9 @@ body {
     margin: 0;
     overflow: hidden;
     background-color: #87CEEB; /* Sky blue */
-    font-family: Arial, sans-serif;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     touch-action: none;
+    user-select: none;
 }
 
 #game-container {
@@ -14,13 +15,25 @@ body {
     height: 100%;
 }
 
+#underwater-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(15, 82, 186, 0.4);
+    pointer-events: none;
+    display: none;
+    z-index: 50;
+}
+
 #overlay {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0,0,0,0.7);
+    background: rgba(0, 0, 0, 0.75);
     color: white;
     display: flex;
     flex-direction: column;
@@ -31,6 +44,19 @@ body {
     text-align: center;
 }
 
+#overlay h1 {
+    font-size: 2.8rem;
+    letter-spacing: 2px;
+    margin-bottom: 10px;
+    text-shadow: 2px 2px 4px #000;
+}
+
+#overlay p {
+    font-size: 1.1rem;
+    margin: 5px 0;
+    color: #ddd;
+}
+
 #ui-container {
     position: absolute;
     top: 0;
@@ -38,16 +64,38 @@ body {
     width: 100%;
     height: 100%;
     pointer-events: none;
+    z-index: 60;
 }
 
 #crosshair {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 20px;
-    height: 20px;
-    border: 2px solid white;
+    width: 16px;
+    height: 16px;
     transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+#crosshair::before, #crosshair::after {
+    content: '';
+    position: absolute;
+    background: white;
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+}
+
+#crosshair::before {
+    top: 7px;
+    left: 0;
+    width: 16px;
+    height: 2px;
+}
+
+#crosshair::after {
+    top: 0;
+    left: 7px;
+    width: 2px;
+    height: 16px;
 }
 
 #inventory {
@@ -56,21 +104,36 @@ body {
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: 10px;
+    gap: 6px;
+    padding: 6px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 2px solid #333;
+    border-radius: 6px;
     pointer-events: auto;
 }
 
 .inventory-slot {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
     border: 2px solid #555;
     background-color: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.1s ease, border-color 0.1s ease;
+    overflow: hidden;
+}
+
+.inventory-slot:hover {
+    border-color: #aaa;
 }
 
 .inventory-slot.selected {
-    border-color: white;
-    box-shadow: 0 0 10px white;
+    border-color: #ffffff;
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+    transform: scale(1.1);
 }
 
 #joystick-base {
@@ -82,7 +145,7 @@ body {
     background: rgba(255, 255, 255, 0.2);
     border-radius: 50%;
     pointer-events: auto;
-    display: none; /* Show only on mobile */
+    display: none;
 }
 
 #joystick-handle {
@@ -100,7 +163,7 @@ body {
     position: absolute;
     bottom: 50px;
     right: 50px;
-    display: none; /* Show only on mobile */
+    display: none;
     flex-direction: column;
     gap: 10px;
     pointer-events: auto;
@@ -119,8 +182,5 @@ body {
 @media (max-width: 768px) {
     #joystick-base, #mobile-buttons {
         display: flex;
-    }
-    #crosshair {
-        display: block;
     }
 }
