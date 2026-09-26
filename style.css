@@ -40,14 +40,48 @@ body {
     pointer-events: none;
 }
 
+#underwater-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(13, 71, 161, 0.45);
+    display: none;
+    pointer-events: none;
+    z-index: 50;
+}
+
 #crosshair {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 20px;
-    height: 20px;
-    border: 2px solid white;
+    width: 16px;
+    height: 16px;
     transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+#crosshair::before,
+#crosshair::after {
+    content: '';
+    position: absolute;
+    background-color: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+}
+
+#crosshair::before {
+    top: 7px;
+    left: 0;
+    width: 16px;
+    height: 2px;
+}
+
+#crosshair::after {
+    top: 0;
+    left: 7px;
+    width: 2px;
+    height: 16px;
 }
 
 #inventory {
@@ -56,21 +90,55 @@ body {
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: 10px;
+    gap: 6px;
+    padding: 6px;
+    background: rgba(0, 0, 0, 0.65);
+    border: 3px solid #3d3d3d;
+    border-radius: 4px;
     pointer-events: auto;
 }
 
 .inventory-slot {
-    width: 40px;
-    height: 40px;
+    position: relative;
+    width: 44px;
+    height: 44px;
     border: 2px solid #555;
-    background-color: rgba(0, 0, 0, 0.5);
+    background-color: rgba(40, 40, 40, 0.8);
+    border-radius: 3px;
     cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.15s ease;
+    box-sizing: border-box;
+}
+
+.inventory-slot:hover {
+    border-color: #aaa;
+    background-color: rgba(70, 70, 70, 0.9);
 }
 
 .inventory-slot.selected {
-    border-color: white;
-    box-shadow: 0 0 10px white;
+    border: 3px solid #ffffff;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+    transform: scale(1.08);
+    z-index: 10;
+}
+
+.slot-number {
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    font-size: 10px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 1px 1px 1px #000;
+}
+
+.slot-icon {
+    width: 32px;
+    height: 32px;
+    image-rendering: pixelated;
 }
 
 #joystick-base {
