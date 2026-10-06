@@ -26,7 +26,11 @@ const BLOCK_TYPES = {
     GLASS: 7,
     WATER: 8,
     COAL_ORE: 9,
-    COBBLESTONE: 10
+    COBBLESTONE: 10,
+    SNOW: 11,
+    OAK_PLANKS: 12,
+    BRICK: 13,
+    GLOWSTONE: 14
 };
 
 const BLOCK_COLORS = {
@@ -39,8 +43,14 @@ const BLOCK_COLORS = {
     [BLOCK_TYPES.GLASS]: 0xffffff,
     [BLOCK_TYPES.WATER]: 0x2196f3,
     [BLOCK_TYPES.COAL_ORE]: 0x424242,
-    [BLOCK_TYPES.COBBLESTONE]: 0x9e9e9e
+    [BLOCK_TYPES.COBBLESTONE]: 0x9e9e9e,
+    [BLOCK_TYPES.SNOW]: 0xf0f4f8,
+    [BLOCK_TYPES.OAK_PLANKS]: 0xc8965d,
+    [BLOCK_TYPES.BRICK]: 0x9e382b,
+    [BLOCK_TYPES.GLOWSTONE]: 0xf3cf6d
 };
+
+const BLOCK_CANVASES = {};
 
 function clampColor(value) {
     return Math.max(0, Math.min(255, Math.round(value)));
@@ -151,9 +161,47 @@ function createBlockTexture(blockType, color) {
                 ctx.strokeRect(x, y, 4, 4);
             }
         }
+    } else if (blockType === BLOCK_TYPES.SNOW) {
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 1.0 + 15, y * 1.0 + 25);
+                paintPixel(x, y, noise * 12);
+            }
+        }
+    } else if (blockType === BLOCK_TYPES.OAK_PLANKS) {
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 0.5 + 8, y * 2.0 + 12);
+                let shade = noise * 15;
+                if (y % 4 === 0) shade -= 25;
+                paintPixel(x, y, shade);
+            }
+        }
+    } else if (blockType === BLOCK_TYPES.BRICK) {
+        ctx.fillStyle = '#b0b0b0';
+        ctx.fillRect(0, 0, 16, 16);
+        for (let row = 0; row < 4; row++) {
+            const y = row * 4 + 1;
+            const shift = (row % 2) * 4;
+            for (let col = 0; col < 2; col++) {
+                const x = (col * 8 + shift) % 16;
+                ctx.fillStyle = adjustHexColor(color, (row + col) % 2 === 0 ? 10 : -10);
+                ctx.fillRect(x + 1, y, 7, 3);
+            }
+        }
+    } else if (blockType === BLOCK_TYPES.GLOWSTONE) {
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 1.8 + 100, y * 1.8 + 200);
+                const shade = noise * 35;
+                paintPixel(x, y, shade);
+            }
+        }
     }
 
-    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND && blockType !== BLOCK_TYPES.LEAVES) {
+    BLOCK_CANVASES[blockType] = canvas;
+
+    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND && blockType !== BLOCK_TYPES.LEAVES && blockType !== BLOCK_TYPES.SNOW) {
         for (let i = 0; i < 80; i++) {
             const x = Math.floor(Math.random() * 16);
             const y = Math.floor(Math.random() * 16);
@@ -177,6 +225,18 @@ Object.entries(BLOCK_COLORS).forEach(([type, color]) => {
     BLOCK_TEXTURES[type] = createBlockTexture(Number(type), color);
 });
 
+const HELD_BLOCK_MATERIALS = {};
+Object.keys(BLOCK_COLORS).forEach(typeStr => {
+    const type = Number(typeStr);
+    HELD_BLOCK_MATERIALS[type] = new THREE.MeshLambertMaterial({
+        map: BLOCK_TEXTURES[type],
+        transparent: type === BLOCK_TYPES.GLASS || type === BLOCK_TYPES.WATER || type === BLOCK_TYPES.LEAVES,
+        opacity: type === BLOCK_TYPES.GLASS ? 0.6 : (type === BLOCK_TYPES.WATER ? 0.6 : 1),
+        alphaTest: type === BLOCK_TYPES.LEAVES ? 0.5 : 0,
+        side: type === BLOCK_TYPES.LEAVES ? THREE.DoubleSide : THREE.FrontSide
+    });
+});
+
 // Scene setup
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB); // Sky blue
@@ -185,6 +245,25 @@ scene.fog = new THREE.Fog(0x87CEEB, 1, RENDER_DISTANCE * CHUNK_SIZE * 1.5);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(CHUNK_SIZE / 2, CHUNK_HEIGHT, CHUNK_SIZE / 2);
 camera.rotation.order = 'YXZ';
+
+// Held block setup
+const heldBlockGeometry = new THREE.BoxGeometry(0.25, 0.25, 0.25);
+const heldBlockMesh = new THREE.Mesh(heldBlockGeometry, HELD_BLOCK_MATERIALS[BLOCK_TYPES.GRASS]);
+heldBlockMesh.position.set(0.35, -0.3, -0.5);
+heldBlockMesh.rotation.set(0.2, -0.4, 0.1);
+camera.add(heldBlockMesh);
+scene.add(camera);
+
+let swingTimer = 0;
+function triggerHandSwing() {
+    swingTimer = Math.PI;
+}
+
+function updateHeldBlock() {
+    if (heldBlockMesh && HELD_BLOCK_MATERIALS[selectedBlock]) {
+        heldBlockMesh.material = HELD_BLOCK_MATERIALS[selectedBlock];
+    }
+}
 
 // Sound system
 function createOscillatorSound(frequency, duration, type = 'sine', gain = 0.07, attack = 0.005) {
@@ -227,6 +306,13 @@ function playSound(action) {
     if (action === 'jump') {
         createOscillatorSound(210, 0.12, 'triangle', 0.045, 0.003);
         createOscillatorSound(300, 0.08, 'sine', 0.022, 0.002);
+    }
+    if (action === 'click') {
+        createOscillatorSound(600, 0.04, 'sine', 0.03, 0.001);
+    }
+    if (action === 'splash') {
+        createOscillatorSound(120, 0.15, 'sine', 0.05, 0.01);
+        createOscillatorSound(80, 0.2, 'triangle', 0.04, 0.01);
     }
 }
 
@@ -273,6 +359,31 @@ function updateEnvironment() {
         Math.sin(sunAngle) * 100,
         50
     );
+
+    if (camera) {
+        sunMesh.position.set(
+            camera.position.x + Math.cos(sunAngle) * 200,
+            camera.position.y + Math.sin(sunAngle) * 200,
+            camera.position.z + 50
+        );
+        moonMesh.position.set(
+            camera.position.x + Math.cos(sunAngle + Math.PI) * 200,
+            camera.position.y + Math.sin(sunAngle + Math.PI) * 200,
+            camera.position.z - 50
+        );
+        starfield.position.copy(camera.position);
+        starfield.rotation.y += 0.0001;
+    }
+
+    let targetStarOpacity = 0;
+    if (gameTime >= 12000 && gameTime <= 22000) {
+        targetStarOpacity = 0.85;
+    } else if (gameTime > 10000 && gameTime < 12000) {
+        targetStarOpacity = ((gameTime - 10000) / 2000) * 0.85;
+    } else if (gameTime > 22000 && gameTime < 24000) {
+        targetStarOpacity = (1 - (gameTime - 22000) / 2000) * 0.85;
+    }
+    starMaterial.opacity = targetStarOpacity;
 }
 
 const renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -287,6 +398,43 @@ scene.add(ambientLight);
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(100, 100, 50);
 scene.add(directionalLight);
+
+// Celestial objects (Sun, Moon, Starfield)
+const sunMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(12, 12, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffffaa })
+);
+scene.add(sunMesh);
+
+const moonMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(10, 10, 10),
+    new THREE.MeshBasicMaterial({ color: 0xe6eef8 })
+);
+scene.add(moonMesh);
+
+const starCount = 350;
+const starGeometry = new THREE.BufferGeometry();
+const starPositions = new Float32Array(starCount * 3);
+for (let i = 0; i < starCount; i++) {
+    const u = Math.random();
+    const v = Math.random();
+    const theta = u * 2.0 * Math.PI;
+    const phi = Math.acos(2.0 * v - 1.0);
+    const radius = 250 + Math.random() * 50;
+
+    starPositions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+    starPositions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+    starPositions[i * 3 + 2] = radius * Math.cos(phi);
+}
+starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+const starMaterial = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 1.8,
+    transparent: true,
+    opacity: 0
+});
+const starfield = new THREE.Points(starGeometry, starMaterial);
+scene.add(starfield);
 
 // Selection Box
 const selectionBoxGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01));
@@ -386,7 +534,13 @@ function generateTerrain(chunkX, chunkZ) {
                 } else if (y < height - 1) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.DIRT);
                 } else if (y === height - 1) {
-                    chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
+                    if (isBeach) {
+                        chunk.setBlock(x, y, z, BLOCK_TYPES.SAND);
+                    } else if (height >= 11) {
+                        chunk.setBlock(x, y, z, BLOCK_TYPES.SNOW);
+                    } else {
+                        chunk.setBlock(x, y, z, BLOCK_TYPES.GRASS);
+                    }
                 } else if (y <= 5) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.WATER);
                 } else {
@@ -582,7 +736,15 @@ window.addEventListener('resize', () => {
 // Player state
 const playerVelocity = new THREE.Vector3();
 let isGrounded = false;
-let selectedBlock = BLOCK_TYPES.STONE;
+let isSprinting = false;
+let isCrouching = false;
+let currentPlayerHeight = PLAYER_HEIGHT;
+let targetFov = 75;
+let wasUnderwater = false;
+let bobTimer = 0;
+let bobOffset = new THREE.Vector3();
+
+let selectedBlock = BLOCK_TYPES.GRASS;
 
 const inventoryUI = document.getElementById('inventory');
 const inventoryBlocks = [
@@ -591,22 +753,45 @@ const inventoryBlocks = [
     BLOCK_TYPES.STONE,
     BLOCK_TYPES.COBBLESTONE,
     BLOCK_TYPES.WOOD,
-    BLOCK_TYPES.LEAVES,
-    BLOCK_TYPES.SAND,
-    BLOCK_TYPES.GLASS,
-    BLOCK_TYPES.COAL_ORE
+    BLOCK_TYPES.OAK_PLANKS,
+    BLOCK_TYPES.BRICK,
+    BLOCK_TYPES.GLOWSTONE,
+    BLOCK_TYPES.SNOW
 ];
 
-inventoryBlocks.forEach(type => {
+function selectInventorySlot(index) {
+    if (index < 0 || index >= inventoryBlocks.length) return;
+    selectedBlock = inventoryBlocks[index];
+    const slots = document.querySelectorAll('.inventory-slot');
+    slots.forEach((s, idx) => {
+        if (idx === index) s.classList.add('selected');
+        else s.classList.remove('selected');
+    });
+    updateHeldBlock();
+    playSound('click');
+}
+
+inventoryBlocks.forEach((type, idx) => {
     const slot = document.createElement('div');
     slot.className = 'inventory-slot';
-    slot.style.backgroundColor = `#${BLOCK_COLORS[type].toString(16).padStart(6, '0')}`;
     if (type === selectedBlock) slot.classList.add('selected');
 
+    const numLabel = document.createElement('span');
+    numLabel.className = 'slot-number';
+    numLabel.textContent = idx + 1;
+    slot.appendChild(numLabel);
+
+    if (BLOCK_CANVASES[type]) {
+        const bgImg = BLOCK_CANVASES[type].toDataURL();
+        slot.style.backgroundImage = `url(${bgImg})`;
+        slot.style.backgroundSize = 'cover';
+        slot.style.imageRendering = 'pixelated';
+    } else {
+        slot.style.backgroundColor = `#${BLOCK_COLORS[type].toString(16).padStart(6, '0')}`;
+    }
+
     slot.onclick = () => {
-        selectedBlock = type;
-        document.querySelectorAll('.inventory-slot').forEach(s => s.classList.remove('selected'));
-        slot.classList.add('selected');
+        selectInventorySlot(idx);
     };
 
     inventoryUI.appendChild(slot);
@@ -628,8 +813,23 @@ controls.addEventListener('unlock', () => {
 });
 
 const keys = {};
-document.addEventListener('keydown', (e) => keys[e.code] = true);
+document.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+    if (e.code >= 'Digit1' && e.code <= 'Digit9') {
+        const slotIdx = parseInt(e.code.replace('Digit', '')) - 1;
+        selectInventorySlot(slotIdx);
+    }
+});
 document.addEventListener('keyup', (e) => keys[e.code] = false);
+
+window.addEventListener('wheel', (e) => {
+    if (!controls.isLocked) return;
+    const currentIndex = inventoryBlocks.indexOf(selectedBlock);
+    let nextIndex = currentIndex + (e.deltaY > 0 ? 1 : -1);
+    if (nextIndex < 0) nextIndex = inventoryBlocks.length - 1;
+    if (nextIndex >= inventoryBlocks.length) nextIndex = 0;
+    selectInventorySlot(nextIndex);
+}, { passive: true });
 
 // Mobile touch state
 let joystickVector = new THREE.Vector2();
@@ -730,6 +930,7 @@ function performAction(action) {
 
         const pos = intersect.point.clone();
 
+        triggerHandSwing();
         if (action === 'break') {
             pos.add(intersect.face.normal.clone().multiplyScalar(-0.5));
             const x = Math.floor(pos.x);
@@ -775,6 +976,22 @@ function updateBlock(worldX, worldY, worldZ, type) {
 }
 
 function handleMovement() {
+    isSprinting = !!(keys['ShiftLeft'] || keys['ShiftRight']) && !!keys['KeyW'];
+    isCrouching = !!(keys['ControlLeft'] || keys['ControlRight']);
+
+    const targetHeight = isCrouching ? 1.4 : 1.8;
+    currentPlayerHeight += (targetHeight - currentPlayerHeight) * 0.2;
+
+    targetFov = isSprinting ? 85 : 75;
+    if (Math.abs(camera.fov - targetFov) > 0.1) {
+        camera.fov += (targetFov - camera.fov) * 0.1;
+        camera.updateProjectionMatrix();
+    }
+
+    let speed = MOVE_SPEED;
+    if (isSprinting) speed *= 1.5;
+    if (isCrouching) speed *= 0.5;
+
     const direction = new THREE.Vector3();
     const hasKeyboardInput = keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD'];
 
@@ -783,19 +1000,25 @@ function handleMovement() {
         const sideVector = new THREE.Vector3(Number(keys['KeyA'] || 0) - Number(keys['KeyD'] || 0), 0, 0);
         direction.subVectors(frontVector, sideVector);
     } else {
-        // Mobile movement
         direction.set(joystickVector.x, 0, joystickVector.y);
     }
 
     direction
         .normalize()
-        .multiplyScalar(MOVE_SPEED)
+        .multiplyScalar(speed)
         .applyEuler(new THREE.Euler(0, camera.rotation.y, 0, 'YXZ'));
 
     playerVelocity.x = direction.x;
     playerVelocity.z = direction.z;
 
-    if (keys['Space'] && isGrounded) {
+    const currentBlock = getBlockAt(camera.position.x, camera.position.y - 0.5, camera.position.z);
+    const inWater = currentBlock === BLOCK_TYPES.WATER;
+
+    if (inWater) {
+        if (keys['Space']) {
+            playerVelocity.y = Math.min(playerVelocity.y + 0.04, 0.08);
+        }
+    } else if (keys['Space'] && isGrounded && !isCrouching) {
         playerVelocity.y = JUMP_FORCE;
         isGrounded = false;
         playSound('jump');
@@ -803,24 +1026,45 @@ function handleMovement() {
 }
 
 function updatePhysics() {
-    playerVelocity.y += GRAVITY;
+    const headBlock = getBlockAt(camera.position.x, camera.position.y, camera.position.z);
+    const isUnderwater = headBlock === BLOCK_TYPES.WATER;
+
+    const underwaterOverlay = document.getElementById('underwater-overlay');
+    if (underwaterOverlay) {
+        underwaterOverlay.style.display = isUnderwater ? 'block' : 'none';
+    }
+
+    if (isUnderwater && !wasUnderwater) {
+        playSound('splash');
+    }
+    wasUnderwater = isUnderwater;
+
+    if (isUnderwater) {
+        playerVelocity.y += GRAVITY * 0.2;
+        playerVelocity.x *= 0.85;
+        playerVelocity.z *= 0.85;
+        scene.fog.near = 1;
+        scene.fog.far = 15;
+        scene.fog.color.setHex(0x1e3d59);
+    } else {
+        playerVelocity.y += GRAVITY;
+    }
+
+    camera.position.sub(bobOffset);
 
     const nextPos = camera.position.clone().add(playerVelocity);
 
-    // Simple collision detection
-    if (getBlockAt(nextPos.x, nextPos.y - PLAYER_HEIGHT, nextPos.z) !== BLOCK_TYPES.AIR) {
+    if (getBlockAt(nextPos.x, nextPos.y - currentPlayerHeight, nextPos.z) !== BLOCK_TYPES.AIR) {
         playerVelocity.y = 0;
         isGrounded = true;
-        nextPos.y = Math.ceil(nextPos.y - PLAYER_HEIGHT) + PLAYER_HEIGHT;
+        nextPos.y = Math.ceil(nextPos.y - currentPlayerHeight) + currentPlayerHeight;
     } else {
         isGrounded = false;
     }
 
-    // Horizontal collisions
     const checkRadius = PLAYER_RADIUS;
-    const playerY = camera.position.y - PLAYER_HEIGHT + 0.1;
+    const playerY = camera.position.y - currentPlayerHeight + 0.1;
 
-    // Check X direction
     if (playerVelocity.x !== 0) {
         const checkX = nextPos.x + (playerVelocity.x > 0 ? checkRadius : -checkRadius);
         if (getBlockAt(checkX, playerY, camera.position.z) !== BLOCK_TYPES.AIR ||
@@ -830,7 +1074,6 @@ function updatePhysics() {
         }
     }
 
-    // Check Z direction
     if (playerVelocity.z !== 0) {
         const checkZ = nextPos.z + (playerVelocity.z > 0 ? checkRadius : -checkRadius);
         if (getBlockAt(camera.position.x, playerY, checkZ) !== BLOCK_TYPES.AIR ||
@@ -841,6 +1084,17 @@ function updatePhysics() {
     }
 
     camera.position.copy(nextPos);
+
+    const isMoving = Math.abs(playerVelocity.x) > 0.001 || Math.abs(playerVelocity.z) > 0.001;
+    if (isMoving && isGrounded && !isUnderwater) {
+        bobTimer += 0.15 * (isSprinting ? 1.4 : 1.0);
+        bobOffset.y = Math.sin(bobTimer) * 0.05;
+        bobOffset.x = Math.cos(bobTimer * 0.5) * 0.03;
+    } else {
+        bobTimer = 0;
+        bobOffset.lerp(new THREE.Vector3(0, 0, 0), 0.2);
+    }
+    camera.position.add(bobOffset);
 }
 
 function updateSelectionBox() {
@@ -869,6 +1123,18 @@ function animate() {
     updateSelectionBox();
     updateEnvironment();
     updateParticles();
+
+    if (swingTimer > 0) {
+        swingTimer -= 0.2;
+        if (swingTimer < 0) swingTimer = 0;
+        const swingOffset = Math.sin(swingTimer);
+        heldBlockMesh.position.z = -0.5 + swingOffset * 0.15;
+        heldBlockMesh.rotation.x = 0.2 + swingOffset * 0.5;
+    } else {
+        heldBlockMesh.position.z = -0.5;
+        heldBlockMesh.rotation.x = 0.2;
+    }
+
     renderer.render(scene, camera);
 }
 
