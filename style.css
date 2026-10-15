@@ -31,6 +31,18 @@ body {
     text-align: center;
 }
 
+#underwater-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(13, 71, 161, 0.45);
+    pointer-events: none;
+    display: none;
+    z-index: 50;
+}
+
 #ui-container {
     position: absolute;
     top: 0;
