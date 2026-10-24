@@ -26,7 +26,13 @@ const BLOCK_TYPES = {
     GLASS: 7,
     WATER: 8,
     COAL_ORE: 9,
-    COBBLESTONE: 10
+    COBBLESTONE: 10,
+    BRICK: 11,
+    GLOWSTONE: 12,
+    SNOW: 13,
+    RED_FLOWER: 14,
+    YELLOW_FLOWER: 15,
+    TALL_GRASS: 16
 };
 
 const BLOCK_COLORS = {
@@ -39,7 +45,13 @@ const BLOCK_COLORS = {
     [BLOCK_TYPES.GLASS]: 0xffffff,
     [BLOCK_TYPES.WATER]: 0x2196f3,
     [BLOCK_TYPES.COAL_ORE]: 0x424242,
-    [BLOCK_TYPES.COBBLESTONE]: 0x9e9e9e
+    [BLOCK_TYPES.COBBLESTONE]: 0x9e9e9e,
+    [BLOCK_TYPES.BRICK]: 0xb22222,
+    [BLOCK_TYPES.GLOWSTONE]: 0xffe082,
+    [BLOCK_TYPES.SNOW]: 0xf0f8ff,
+    [BLOCK_TYPES.RED_FLOWER]: 0xe53935,
+    [BLOCK_TYPES.YELLOW_FLOWER]: 0xfdd835,
+    [BLOCK_TYPES.TALL_GRASS]: 0x43a047
 };
 
 function clampColor(value) {
@@ -151,9 +163,57 @@ function createBlockTexture(blockType, color) {
                 ctx.strokeRect(x, y, 4, 4);
             }
         }
+    } else if (blockType === BLOCK_TYPES.BRICK) {
+        ctx.fillStyle = adjustHexColor(color, 0);
+        ctx.fillRect(0, 0, 16, 16);
+        ctx.fillStyle = '#dcdcdc'; // mortar
+        for (let y = 3; y < 16; y += 4) ctx.fillRect(0, y, 16, 1);
+        for (let y = 0; y < 16; y += 4) {
+            const offset = (y / 4) % 2 === 0 ? 0 : 4;
+            for (let x = offset; x < 16; x += 8) {
+                ctx.fillRect(x, y, 1, 4);
+            }
+        }
+    } else if (blockType === BLOCK_TYPES.GLOWSTONE) {
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 1.5 + 77, y * 1.5 + 88);
+                paintPixel(x, y, 20 + noise * 30);
+            }
+        }
+    } else if (blockType === BLOCK_TYPES.SNOW) {
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const noise = textureNoise.noise2D(x * 0.8 + 12, y * 0.8 + 34);
+                paintPixel(x, y, noise * 10);
+            }
+        }
+    } else if (blockType === BLOCK_TYPES.RED_FLOWER || blockType === BLOCK_TYPES.YELLOW_FLOWER || blockType === BLOCK_TYPES.TALL_GRASS) {
+        ctx.clearRect(0, 0, 16, 16);
+        // Stem / grass blades
+        ctx.fillStyle = '#2e7d32';
+        ctx.fillRect(7, 6, 2, 10);
+        ctx.fillRect(5, 9, 2, 4);
+        ctx.fillRect(9, 8, 2, 5);
+        if (blockType === BLOCK_TYPES.RED_FLOWER) {
+            ctx.fillStyle = '#e53935';
+            ctx.fillRect(5, 3, 6, 4);
+            ctx.fillStyle = '#ffeb3b';
+            ctx.fillRect(7, 4, 2, 2);
+        } else if (blockType === BLOCK_TYPES.YELLOW_FLOWER) {
+            ctx.fillStyle = '#fdd835';
+            ctx.fillRect(5, 3, 6, 4);
+            ctx.fillStyle = '#ff9800';
+            ctx.fillRect(7, 4, 2, 2);
+        } else if (blockType === BLOCK_TYPES.TALL_GRASS) {
+            ctx.fillStyle = '#43a047';
+            ctx.fillRect(4, 3, 2, 13);
+            ctx.fillRect(7, 1, 2, 15);
+            ctx.fillRect(10, 5, 2, 11);
+        }
     }
 
-    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND && blockType !== BLOCK_TYPES.LEAVES) {
+    if (blockType !== BLOCK_TYPES.DIRT && blockType !== BLOCK_TYPES.GRASS && blockType !== BLOCK_TYPES.SAND && blockType !== BLOCK_TYPES.LEAVES && blockType !== BLOCK_TYPES.RED_FLOWER && blockType !== BLOCK_TYPES.YELLOW_FLOWER && blockType !== BLOCK_TYPES.TALL_GRASS && blockType !== BLOCK_TYPES.SNOW && blockType !== BLOCK_TYPES.GLOWSTONE) {
         for (let i = 0; i < 80; i++) {
             const x = Math.floor(Math.random() * 16);
             const y = Math.floor(Math.random() * 16);
@@ -185,6 +245,84 @@ scene.fog = new THREE.Fog(0x87CEEB, 1, RENDER_DISTANCE * CHUNK_SIZE * 1.5);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(CHUNK_SIZE / 2, CHUNK_HEIGHT, CHUNK_SIZE / 2);
 camera.rotation.order = 'YXZ';
+
+scene.add(camera);
+
+// Held Block Setup
+const HELD_BLOCK_MATERIALS = {};
+Object.entries(BLOCK_TYPES).forEach(([name, type]) => {
+    if (type === BLOCK_TYPES.AIR) return;
+    const isFoliage = type === BLOCK_TYPES.RED_FLOWER || type === BLOCK_TYPES.YELLOW_FLOWER || type === BLOCK_TYPES.TALL_GRASS;
+    HELD_BLOCK_MATERIALS[type] = new THREE.MeshLambertMaterial({
+        map: BLOCK_TEXTURES[type],
+        transparent: type === BLOCK_TYPES.GLASS || type === BLOCK_TYPES.WATER || type === BLOCK_TYPES.LEAVES || isFoliage,
+        opacity: type === BLOCK_TYPES.GLASS ? 0.6 : (type === BLOCK_TYPES.WATER ? 0.6 : 1),
+        alphaTest: isFoliage ? 0.2 : (type === BLOCK_TYPES.LEAVES ? 0.5 : 0),
+        side: (type === BLOCK_TYPES.LEAVES || isFoliage) ? THREE.DoubleSide : THREE.FrontSide
+    });
+});
+
+const heldItemGroup = new THREE.Group();
+const heldBlockMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.3, 0.3, 0.3),
+    HELD_BLOCK_MATERIALS[BLOCK_TYPES.STONE]
+);
+heldBlockMesh.position.set(0.4, -0.35, -0.5);
+heldBlockMesh.rotation.set(0.2, -0.4, 0.1);
+heldItemGroup.add(heldBlockMesh);
+camera.add(heldItemGroup);
+
+let swingProgress = 0;
+let isSwinging = false;
+
+function triggerSwing() {
+    isSwinging = true;
+    swingProgress = 0;
+}
+
+function updateHeldItemAnimation() {
+    const isMoving = playerVelocity.x !== 0 || playerVelocity.z !== 0;
+    let bobX = 0;
+    let bobY = 0;
+    if (isMoving && isGrounded) {
+        const time = Date.now() * 0.008;
+        bobX = Math.sin(time) * 0.02;
+        bobY = Math.abs(Math.cos(time)) * 0.02;
+    }
+
+    if (isSwinging) {
+        swingProgress += 0.15;
+        const swingAngle = Math.sin(swingProgress * Math.PI) * 0.6;
+        heldItemGroup.rotation.x = swingAngle;
+        heldItemGroup.rotation.y = -swingAngle * 0.5;
+        heldItemGroup.position.z = -swingAngle * 0.2;
+        if (swingProgress >= 1.0) {
+            isSwinging = false;
+            swingProgress = 0;
+            heldItemGroup.rotation.set(0, 0, 0);
+            heldItemGroup.position.set(0, 0, 0);
+        }
+    } else {
+        heldItemGroup.position.x = bobX;
+        heldItemGroup.position.y = bobY;
+    }
+}
+
+function updateHeldBlockModel(type) {
+    if (HELD_BLOCK_MATERIALS[type]) {
+        const isFoliage = type === BLOCK_TYPES.RED_FLOWER || type === BLOCK_TYPES.YELLOW_FLOWER || type === BLOCK_TYPES.TALL_GRASS;
+        heldBlockMesh.geometry = isFoliage ? foliageGeometry : new THREE.BoxGeometry(0.3, 0.3, 0.3);
+        heldBlockMesh.material = HELD_BLOCK_MATERIALS[type];
+        if (isFoliage) {
+            heldBlockMesh.scale.set(0.4, 0.4, 0.4);
+            heldBlockMesh.position.set(0.4, -0.3, -0.5);
+        } else {
+            heldBlockMesh.scale.set(1, 1, 1);
+            heldBlockMesh.position.set(0.4, -0.35, -0.5);
+        }
+    }
+}
+
 
 // Sound system
 function createOscillatorSound(frequency, duration, type = 'sine', gain = 0.07, attack = 0.005) {
@@ -233,6 +371,49 @@ function playSound(action) {
 const DAY_DURATION = 24000;
 let gameTime = 6000;
 
+
+// Sun and Moon
+const sunGeometry = new THREE.BoxGeometry(10, 10, 10);
+const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xfff2a3 });
+const sunMesh = new THREE.Mesh(sunGeometry, sunMaterial);
+scene.add(sunMesh);
+
+const moonGeometry = new THREE.BoxGeometry(8, 8, 8);
+const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xe0e0e0 });
+const moonMesh = new THREE.Mesh(moonGeometry, moonMaterial);
+scene.add(moonMesh);
+
+// Starfield
+const starCount = 300;
+const starGeometry = new THREE.BufferGeometry();
+const starPositions = new Float32Array(starCount * 3);
+for (let i = 0; i < starCount; i++) {
+    starPositions[i * 3] = (Math.random() - 0.5) * 300;
+    starPositions[i * 3 + 1] = Math.random() * 100 + 30;
+    starPositions[i * 3 + 2] = (Math.random() - 0.5) * 300;
+}
+starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 1.5, transparent: true, opacity: 0 });
+const starfield = new THREE.Points(starGeometry, starMaterial);
+scene.add(starfield);
+
+// Clouds system
+const cloudsGroup = new THREE.Group();
+const cloudMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 });
+const cloudGeo = new THREE.BoxGeometry(8, 2, 8);
+for (let i = 0; i < 20; i++) {
+    const cloud = new THREE.Group();
+    const clusterSize = Math.floor(Math.random() * 4) + 3;
+    for (let c = 0; c < clusterSize; c++) {
+        const part = new THREE.Mesh(cloudGeo, cloudMaterial);
+        part.position.set((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 12);
+        cloud.add(part);
+    }
+    cloud.position.set((Math.random() - 0.5) * 160, 22 + Math.random() * 3, (Math.random() - 0.5) * 160);
+    cloudsGroup.add(cloud);
+}
+scene.add(cloudsGroup);
+
 function updateEnvironment() {
     gameTime = (gameTime + 1) % DAY_DURATION;
 
@@ -268,11 +449,40 @@ function updateEnvironment() {
     ambientLight.intensity = lightIntensity * 0.6 + 0.1;
 
     const sunAngle = (gameTime / DAY_DURATION) * Math.PI * 2 + Math.PI;
-    directionalLight.position.set(
-        Math.cos(sunAngle) * 100,
-        Math.sin(sunAngle) * 100,
-        50
+    const sunDistance = 120;
+
+    sunMesh.position.set(
+        camera.position.x + Math.cos(sunAngle) * sunDistance,
+        camera.position.y + Math.sin(sunAngle) * sunDistance,
+        camera.position.z + 40
     );
+    sunMesh.lookAt(camera.position);
+
+    moonMesh.position.set(
+        camera.position.x - Math.cos(sunAngle) * sunDistance,
+        camera.position.y - Math.sin(sunAngle) * sunDistance,
+        camera.position.z - 40
+    );
+    moonMesh.lookAt(camera.position);
+
+    directionalLight.position.copy(sunMesh.position);
+
+    // Starfield opacity
+    if (gameTime > 12000 && gameTime < 22000) {
+        const starOpacity = gameTime < 14000 ? (gameTime - 12000) / 2000 : (gameTime > 20000 ? (22000 - gameTime) / 2000 : 1);
+        starMaterial.opacity = starOpacity;
+    } else {
+        starMaterial.opacity = 0;
+    }
+    starfield.position.copy(camera.position);
+
+    // Clouds movement
+    cloudsGroup.children.forEach(cloud => {
+        cloud.position.x += 0.02;
+        if (cloud.position.x > camera.position.x + 100) {
+            cloud.position.x = camera.position.x - 100;
+        }
+    });
 }
 
 const renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -386,7 +596,11 @@ function generateTerrain(chunkX, chunkZ) {
                 } else if (y < height - 1) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.DIRT);
                 } else if (y === height - 1) {
-                    chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
+                    if (height >= 11) {
+                        chunk.setBlock(x, y, z, BLOCK_TYPES.SNOW);
+                    } else {
+                        chunk.setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.GRASS);
+                    }
                 } else if (y <= 5) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.WATER);
                 } else {
@@ -394,10 +608,10 @@ function generateTerrain(chunkX, chunkZ) {
                 }
             }
 
-            // Trees
+            // Trees and Flora
             if (!isBeach && height > 6 && x > 1 && x < CHUNK_SIZE - 2 && z > 1 && z < CHUNK_SIZE - 2) {
                 const treeNoise = textureNoise.noise2D(worldX * 0.5, worldZ * 0.5);
-                if (treeNoise > 0.8) {
+                if (treeNoise > 0.8 && height < 11) {
                     // Trunk
                     for (let ty = 0; ty < 3; ty++) {
                         chunk.setBlock(x, height + ty, z, BLOCK_TYPES.WOOD);
@@ -410,6 +624,15 @@ function generateTerrain(chunkX, chunkZ) {
                                 chunk.setBlock(x + lx, height + 2 + ly, z + lz, BLOCK_TYPES.LEAVES);
                             }
                         }
+                    }
+                } else if (treeNoise < -0.4 && height < 11) {
+                    const floraNoise = textureNoise.noise2D(worldX * 0.8 + 10, worldZ * 0.8 + 20);
+                    if (floraNoise > 0.5) {
+                        chunk.setBlock(x, height, z, BLOCK_TYPES.RED_FLOWER);
+                    } else if (floraNoise > 0.2) {
+                        chunk.setBlock(x, height, z, BLOCK_TYPES.YELLOW_FLOWER);
+                    } else if (floraNoise > -0.2) {
+                        chunk.setBlock(x, height, z, BLOCK_TYPES.TALL_GRASS);
                     }
                 }
             }
@@ -432,8 +655,34 @@ function getBlockAt(worldX, worldY, worldZ) {
 }
 
 function isBlockTransparent(type) {
-    return type === BLOCK_TYPES.AIR || type === BLOCK_TYPES.GLASS || type === BLOCK_TYPES.LEAVES || type === BLOCK_TYPES.WATER;
+    return type === BLOCK_TYPES.AIR || type === BLOCK_TYPES.GLASS || type === BLOCK_TYPES.LEAVES || type === BLOCK_TYPES.WATER || type === BLOCK_TYPES.RED_FLOWER || type === BLOCK_TYPES.YELLOW_FLOWER || type === BLOCK_TYPES.TALL_GRASS;
 }
+
+function createFoliageGeometry() {
+    const plane1 = new THREE.PlaneGeometry(0.8, 0.8).toNonIndexed();
+    plane1.rotateY(Math.PI / 4);
+    plane1.translate(0.5, 0.4, 0.5);
+
+    const plane2 = new THREE.PlaneGeometry(0.8, 0.8).toNonIndexed();
+    plane2.rotateY(-Math.PI / 4);
+    plane2.translate(0.5, 0.4, 0.5);
+
+    const mergedPos = new Float32Array(plane1.attributes.position.array.length + plane2.attributes.position.array.length);
+    mergedPos.set(plane1.attributes.position.array, 0);
+    mergedPos.set(plane2.attributes.position.array, plane1.attributes.position.array.length);
+
+    const mergedUv = new Float32Array(plane1.attributes.uv.array.length + plane2.attributes.uv.array.length);
+    mergedUv.set(plane1.attributes.uv.array, 0);
+    mergedUv.set(plane2.attributes.uv.array, plane1.attributes.uv.array.length);
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(mergedPos, 3));
+    geom.setAttribute('uv', new THREE.BufferAttribute(mergedUv, 2));
+    geom.computeVertexNormals();
+    return geom;
+}
+
+const foliageGeometry = createFoliageGeometry();
 
 function createChunkMesh(chunk) {
     const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -476,14 +725,16 @@ function createChunkMesh(chunk) {
     const group = new THREE.Group();
     for (const [blockTypeStr, matrices] of Object.entries(instancedMeshes)) {
         const blockType = parseInt(blockTypeStr);
+        const isFoliage = blockType === BLOCK_TYPES.RED_FLOWER || blockType === BLOCK_TYPES.YELLOW_FLOWER || blockType === BLOCK_TYPES.TALL_GRASS;
+        const geomToUse = isFoliage ? foliageGeometry : geometry;
         const material = new THREE.MeshLambertMaterial({
             map: BLOCK_TEXTURES[blockType],
-            transparent: blockType === BLOCK_TYPES.GLASS || blockType === BLOCK_TYPES.WATER || blockType === BLOCK_TYPES.LEAVES,
+            transparent: blockType === BLOCK_TYPES.GLASS || blockType === BLOCK_TYPES.WATER || blockType === BLOCK_TYPES.LEAVES || isFoliage,
             opacity: blockType === BLOCK_TYPES.GLASS ? 0.6 : (blockType === BLOCK_TYPES.WATER ? 0.6 : 1),
-            alphaTest: blockType === BLOCK_TYPES.LEAVES ? 0.5 : 0,
-            side: blockType === BLOCK_TYPES.LEAVES ? THREE.DoubleSide : THREE.FrontSide
+            alphaTest: isFoliage ? 0.2 : (blockType === BLOCK_TYPES.LEAVES ? 0.5 : 0),
+            side: (blockType === BLOCK_TYPES.LEAVES || isFoliage) ? THREE.DoubleSide : THREE.FrontSide
         });
-        const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
+        const mesh = new THREE.InstancedMesh(geomToUse, material, matrices.length);
         for (let i = 0; i < matrices.length; i++) {
             mesh.setMatrixAt(i, matrices[i]);
         }
@@ -590,11 +841,11 @@ const inventoryBlocks = [
     BLOCK_TYPES.DIRT,
     BLOCK_TYPES.STONE,
     BLOCK_TYPES.COBBLESTONE,
+    BLOCK_TYPES.BRICK,
+    BLOCK_TYPES.GLOWSTONE,
+    BLOCK_TYPES.SNOW,
     BLOCK_TYPES.WOOD,
-    BLOCK_TYPES.LEAVES,
-    BLOCK_TYPES.SAND,
-    BLOCK_TYPES.GLASS,
-    BLOCK_TYPES.COAL_ORE
+    BLOCK_TYPES.LEAVES
 ];
 
 inventoryBlocks.forEach(type => {
@@ -604,7 +855,7 @@ inventoryBlocks.forEach(type => {
     if (type === selectedBlock) slot.classList.add('selected');
 
     slot.onclick = () => {
-        selectedBlock = type;
+        selectedBlock = type; updateHeldBlockModel(type);
         document.querySelectorAll('.inventory-slot').forEach(s => s.classList.remove('selected'));
         slot.classList.add('selected');
     };
@@ -740,7 +991,7 @@ function performAction(action) {
             if (blockType !== BLOCK_TYPES.AIR) {
                 createParticles(new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5), BLOCK_COLORS[blockType]);
                 updateBlock(x, y, z, BLOCK_TYPES.AIR);
-                playSound('break');
+                playSound('break'); triggerSwing();
             }
         } else if (action === 'place') {
             pos.add(intersect.face.normal.clone().multiplyScalar(0.5));
@@ -754,7 +1005,7 @@ function performAction(action) {
                 return;
             }
             updateBlock(x, y, z, selectedBlock);
-            playSound('place');
+            playSound('place'); triggerSwing();
         }
     }
 }
@@ -776,6 +1027,8 @@ function updateBlock(worldX, worldY, worldZ, type) {
 
 function handleMovement() {
     const direction = new THREE.Vector3();
+    const headBlock = getBlockAt(camera.position.x, camera.position.y, camera.position.z);
+    const isInWater = headBlock === BLOCK_TYPES.WATER || getBlockAt(camera.position.x, camera.position.y - 1, camera.position.z) === BLOCK_TYPES.WATER;
     const hasKeyboardInput = keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD'];
 
     if (hasKeyboardInput) {
@@ -795,20 +1048,57 @@ function handleMovement() {
     playerVelocity.x = direction.x;
     playerVelocity.z = direction.z;
 
-    if (keys['Space'] && isGrounded) {
-        playerVelocity.y = JUMP_FORCE;
-        isGrounded = false;
-        playSound('jump');
+    if (keys['Space']) {
+        if (isInWater) {
+            playerVelocity.y = 0.08;
+        } else if (isGrounded) {
+            playerVelocity.y = JUMP_FORCE;
+            isGrounded = false;
+            playSound('jump');
+        }
     }
 }
 
+let isSubmerged = false;
+
 function updatePhysics() {
-    playerVelocity.y += GRAVITY;
+    const eyeBlock = getBlockAt(camera.position.x, camera.position.y, camera.position.z);
+    const bodyBlock = getBlockAt(camera.position.x, camera.position.y - 1, camera.position.z);
+    const inWater = eyeBlock === BLOCK_TYPES.WATER || bodyBlock === BLOCK_TYPES.WATER;
+
+    if (inWater) {
+        playerVelocity.y = Math.max(-0.05, playerVelocity.y + GRAVITY * 0.2);
+        playerVelocity.x *= 0.8;
+        playerVelocity.z *= 0.8;
+    } else {
+        playerVelocity.y += GRAVITY;
+    }
+
+    // Underwater visual effects
+    const overlay = document.getElementById('underwater-overlay');
+    if (eyeBlock === BLOCK_TYPES.WATER) {
+        if (!isSubmerged) {
+            isSubmerged = true;
+            if (overlay) overlay.style.display = 'block';
+            scene.fog.color.setHex(0x0d47a1);
+            scene.fog.near = 0.5;
+            scene.fog.far = 15;
+        }
+    } else {
+        if (isSubmerged) {
+            isSubmerged = false;
+            if (overlay) overlay.style.display = 'none';
+            scene.fog.near = 1;
+            scene.fog.far = RENDER_DISTANCE * CHUNK_SIZE * 1.5;
+        }
+    }
 
     const nextPos = camera.position.clone().add(playerVelocity);
 
     // Simple collision detection
-    if (getBlockAt(nextPos.x, nextPos.y - PLAYER_HEIGHT, nextPos.z) !== BLOCK_TYPES.AIR) {
+    const groundBlock = getBlockAt(nextPos.x, nextPos.y - PLAYER_HEIGHT, nextPos.z);
+    const isPassable = (type) => type === BLOCK_TYPES.AIR || type === BLOCK_TYPES.WATER || type === BLOCK_TYPES.RED_FLOWER || type === BLOCK_TYPES.YELLOW_FLOWER || type === BLOCK_TYPES.TALL_GRASS;
+    if (!isPassable(groundBlock)) {
         playerVelocity.y = 0;
         isGrounded = true;
         nextPos.y = Math.ceil(nextPos.y - PLAYER_HEIGHT) + PLAYER_HEIGHT;
@@ -823,8 +1113,8 @@ function updatePhysics() {
     // Check X direction
     if (playerVelocity.x !== 0) {
         const checkX = nextPos.x + (playerVelocity.x > 0 ? checkRadius : -checkRadius);
-        if (getBlockAt(checkX, playerY, camera.position.z) !== BLOCK_TYPES.AIR ||
-            getBlockAt(checkX, playerY + 1, camera.position.z) !== BLOCK_TYPES.AIR) {
+        if (!isPassable(getBlockAt(checkX, playerY, camera.position.z)) ||
+            !isPassable(getBlockAt(checkX, playerY + 1, camera.position.z))) {
             playerVelocity.x = 0;
             nextPos.x = camera.position.x;
         }
@@ -833,8 +1123,8 @@ function updatePhysics() {
     // Check Z direction
     if (playerVelocity.z !== 0) {
         const checkZ = nextPos.z + (playerVelocity.z > 0 ? checkRadius : -checkRadius);
-        if (getBlockAt(camera.position.x, playerY, checkZ) !== BLOCK_TYPES.AIR ||
-            getBlockAt(camera.position.x, playerY + 1, checkZ) !== BLOCK_TYPES.AIR) {
+        if (!isPassable(getBlockAt(camera.position.x, playerY, checkZ)) ||
+            !isPassable(getBlockAt(camera.position.x, playerY + 1, checkZ))) {
             playerVelocity.z = 0;
             nextPos.z = camera.position.z;
         }
@@ -869,6 +1159,7 @@ function animate() {
     updateSelectionBox();
     updateEnvironment();
     updateParticles();
+    updateHeldItemAnimation();
     renderer.render(scene, camera);
 }
 
