@@ -26,7 +26,9 @@ const BLOCK_TYPES = {
     GLASS: 7,
     WATER: 8,
     COAL_ORE: 9,
-    COBBLESTONE: 10
+    COBBLESTONE: 10,
+    IRON_ORE: 11,
+    GOLD_ORE: 12
 };
 
 const BLOCK_COLORS = {
@@ -39,7 +41,9 @@ const BLOCK_COLORS = {
     [BLOCK_TYPES.GLASS]: 0xffffff,
     [BLOCK_TYPES.WATER]: 0x2196f3,
     [BLOCK_TYPES.COAL_ORE]: 0x424242,
-    [BLOCK_TYPES.COBBLESTONE]: 0x9e9e9e
+    [BLOCK_TYPES.COBBLESTONE]: 0x9e9e9e,
+    [BLOCK_TYPES.IRON_ORE]: 0xd8af97,
+    [BLOCK_TYPES.GOLD_ORE]: 0xfdd835
 };
 
 function clampColor(value) {
@@ -140,6 +144,24 @@ function createBlockTexture(blockType, color) {
             const rx = Math.floor(Math.random() * 12) + 2;
             const ry = Math.floor(Math.random() * 12) + 2;
             ctx.fillStyle = '#222';
+            ctx.fillRect(rx, ry, Math.random() * 3 + 1, Math.random() * 3 + 1);
+        }
+    } else if (blockType === BLOCK_TYPES.IRON_ORE) {
+        ctx.fillStyle = adjustHexColor(BLOCK_COLORS[BLOCK_TYPES.STONE], 0);
+        ctx.fillRect(0, 0, 16, 16);
+        for (let i = 0; i < 6; i++) {
+            const rx = Math.floor(Math.random() * 12) + 2;
+            const ry = Math.floor(Math.random() * 12) + 2;
+            ctx.fillStyle = '#d8af97';
+            ctx.fillRect(rx, ry, Math.random() * 3 + 1, Math.random() * 3 + 1);
+        }
+    } else if (blockType === BLOCK_TYPES.GOLD_ORE) {
+        ctx.fillStyle = adjustHexColor(BLOCK_COLORS[BLOCK_TYPES.STONE], 0);
+        ctx.fillRect(0, 0, 16, 16);
+        for (let i = 0; i < 6; i++) {
+            const rx = Math.floor(Math.random() * 12) + 2;
+            const ry = Math.floor(Math.random() * 12) + 2;
+            ctx.fillStyle = '#fdd835';
             ctx.fillRect(rx, ry, Math.random() * 3 + 1, Math.random() * 3 + 1);
         }
     } else if (blockType === BLOCK_TYPES.COBBLESTONE) {
@@ -382,7 +404,18 @@ function generateTerrain(chunkX, chunkZ) {
             for (let y = 0; y < CHUNK_HEIGHT; y++) {
                 if (y < height - 4) {
                     const coalNoise = simplex.noise2D(worldX * 0.2, (y + worldZ) * 0.2);
-                    chunk.setBlock(x, y, z, coalNoise > 0.6 ? BLOCK_TYPES.COAL_ORE : BLOCK_TYPES.STONE);
+                    const ironNoise = simplex.noise2D((worldX + 100) * 0.25, (y + worldZ + 100) * 0.25);
+                    const goldNoise = simplex.noise2D((worldX + 200) * 0.3, (y + worldZ + 200) * 0.3);
+
+                    let blockToPlace = BLOCK_TYPES.STONE;
+                    if (y < 4 && goldNoise > 0.72) {
+                        blockToPlace = BLOCK_TYPES.GOLD_ORE;
+                    } else if (y < 7 && ironNoise > 0.68) {
+                        blockToPlace = BLOCK_TYPES.IRON_ORE;
+                    } else if (coalNoise > 0.6) {
+                        blockToPlace = BLOCK_TYPES.COAL_ORE;
+                    }
+                    chunk.setBlock(x, y, z, blockToPlace);
                 } else if (y < height - 1) {
                     chunk.setBlock(x, y, z, BLOCK_TYPES.DIRT);
                 } else if (y === height - 1) {
@@ -583,6 +616,17 @@ window.addEventListener('resize', () => {
 const playerVelocity = new THREE.Vector3();
 let isGrounded = false;
 let selectedBlock = BLOCK_TYPES.STONE;
+let stats = {
+    blocksBroken: 0,
+    blocksPlaced: 0
+};
+
+function updateStatsHUD() {
+    const brokenElem = document.getElementById('blocks-broken-count');
+    const placedElem = document.getElementById('blocks-placed-count');
+    if (brokenElem) brokenElem.textContent = stats.blocksBroken;
+    if (placedElem) placedElem.textContent = stats.blocksPlaced;
+}
 
 const inventoryUI = document.getElementById('inventory');
 const inventoryBlocks = [
@@ -594,7 +638,9 @@ const inventoryBlocks = [
     BLOCK_TYPES.LEAVES,
     BLOCK_TYPES.SAND,
     BLOCK_TYPES.GLASS,
-    BLOCK_TYPES.COAL_ORE
+    BLOCK_TYPES.COAL_ORE,
+    BLOCK_TYPES.IRON_ORE,
+    BLOCK_TYPES.GOLD_ORE
 ];
 
 inventoryBlocks.forEach(type => {
@@ -741,6 +787,8 @@ function performAction(action) {
                 createParticles(new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5), BLOCK_COLORS[blockType]);
                 updateBlock(x, y, z, BLOCK_TYPES.AIR);
                 playSound('break');
+                stats.blocksBroken++;
+                updateStatsHUD();
             }
         } else if (action === 'place') {
             pos.add(intersect.face.normal.clone().multiplyScalar(0.5));
@@ -755,6 +803,8 @@ function performAction(action) {
             }
             updateBlock(x, y, z, selectedBlock);
             playSound('place');
+            stats.blocksPlaced++;
+            updateStatsHUD();
         }
     }
 }
