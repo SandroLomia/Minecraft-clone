@@ -50,6 +50,22 @@ body {
     transform: translate(-50%, -50%);
 }
 
+#stats-hud {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
 #inventory {
     position: absolute;
     bottom: 20px;
