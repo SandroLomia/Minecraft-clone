@@ -8,13 +8,20 @@
 </head>
 <body>
     <div id="game-container"></div>
+    <div id="underwater-overlay"></div>
     <div id="overlay">
         <h1>MINECRAFT CLONE</h1>
         <p>Click to Play</p>
-        <p>(WASD to move, Space to jump)</p>
-        <p>(Mouse to look, Click to break/place)</p>
+        <p><strong>Controls:</strong> WASD to move | Shift to Sprint | Ctrl to Crouch</p>
+        <p>Space to Jump / Swim | 1-9 or Scroll Wheel to select block</p>
+        <p>Left Click to Break | Right Click to Place</p>
     </div>
     <div id="ui-container">
+        <div id="stats-hud">
+            <div>Broken: <span id="stats-broken">0</span></div>
+            <div>Placed: <span id="stats-placed">0</span></div>
+            <div id="stats-coords">X: 0 Y: 0 Z: 0</div>
+        </div>
         <div id="crosshair"></div>
         <div id="joystick-base">
             <div id="joystick-handle"></div>
