@@ -44,10 +44,49 @@ body {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 20px;
-    height: 20px;
-    border: 2px solid white;
+    width: 16px;
+    height: 16px;
     transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+#crosshair::before,
+#crosshair::after {
+    content: '';
+    position: absolute;
+    background-color: rgba(255, 255, 255, 0.85);
+    box-shadow: 0 0 1px rgba(0, 0, 0, 0.8);
+}
+
+#crosshair::before {
+    top: 0;
+    left: 7px;
+    width: 2px;
+    height: 16px;
+}
+
+#crosshair::after {
+    top: 7px;
+    left: 0;
+    width: 16px;
+    height: 2px;
+}
+
+#stats-hud {
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: #f0f0f0;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    line-height: 1.4;
+    user-select: none;
+    pointer-events: none;
+    text-shadow: 1px 1px 2px black;
 }
 
 #inventory {
@@ -56,21 +95,46 @@ body {
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: 10px;
+    gap: 6px;
+    padding: 4px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 2px solid #333;
+    border-radius: 4px;
     pointer-events: auto;
 }
 
 .inventory-slot {
-    width: 40px;
-    height: 40px;
+    position: relative;
+    width: 44px;
+    height: 44px;
     border: 2px solid #555;
     background-color: rgba(0, 0, 0, 0.5);
+    box-sizing: border-box;
     cursor: pointer;
+    transition: transform 0.05s ease, border-color 0.1s ease;
+}
+
+.inventory-slot:hover {
+    border-color: #aaa;
 }
 
 .inventory-slot.selected {
-    border-color: white;
-    box-shadow: 0 0 10px white;
+    border-color: #ffffaa;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.9), inset 0 0 4px rgba(255, 255, 255, 0.6);
+    transform: scale(1.08);
+    z-index: 2;
+}
+
+.slot-number {
+    position: absolute;
+    bottom: 1px;
+    right: 3px;
+    font-family: monospace;
+    font-size: 11px;
+    font-weight: bold;
+    color: #ffffff;
+    text-shadow: 1px 1px 1px black, -1px -1px 1px black;
+    pointer-events: none;
 }
 
 #joystick-base {
