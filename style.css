@@ -1,9 +1,15 @@
+* {
+    box-sizing: border-box;
+}
+
 body {
     margin: 0;
     overflow: hidden;
     background-color: #87CEEB; /* Sky blue */
-    font-family: Arial, sans-serif;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 #game-container {
@@ -14,13 +20,31 @@ body {
     height: 100%;
 }
 
+#underwater-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle, rgba(16, 92, 148, 0.45) 0%, rgba(5, 34, 61, 0.8) 100%);
+    pointer-events: none;
+    display: none;
+    z-index: 50;
+    animation: underwaterWiggle 4s ease-in-out infinite alternate;
+}
+
+@keyframes underwaterWiggle {
+    0% { filter: hue-rotate(0deg) brightness(1); }
+    100% { filter: hue-rotate(8deg) brightness(0.92); }
+}
+
 #overlay {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0,0,0,0.7);
+    background: rgba(0, 0, 0, 0.75);
     color: white;
     display: flex;
     flex-direction: column;
@@ -29,6 +53,20 @@ body {
     z-index: 100;
     cursor: pointer;
     text-align: center;
+    padding: 20px;
+}
+
+#overlay h1 {
+    font-size: 2.8rem;
+    letter-spacing: 4px;
+    margin-bottom: 8px;
+    text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+#overlay p {
+    font-size: 1.1rem;
+    margin: 6px 0;
+    color: #e0e0e0;
 }
 
 #ui-container {
@@ -38,16 +76,61 @@ body {
     width: 100%;
     height: 100%;
     pointer-events: none;
+    z-index: 60;
 }
 
+#stats-hud {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    background: rgba(0, 0, 0, 0.55);
+    padding: 10px 14px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #f1f2f6;
+    font-size: 13px;
+    font-family: monospace;
+    line-height: 1.6;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+#stats-hud strong {
+    color: #74b9ff;
+}
+
+/* Pixel-aligned classic crosshair */
 #crosshair {
     position: absolute;
     top: 50%;
     left: 50%;
     width: 20px;
     height: 20px;
-    border: 2px solid white;
     transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+#crosshair::before,
+#crosshair::after {
+    content: '';
+    position: absolute;
+    background-color: rgba(255, 255, 255, 0.88);
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+}
+
+#crosshair::before {
+    left: 50%;
+    top: 0;
+    width: 2px;
+    height: 20px;
+    transform: translateX(-50%);
+}
+
+#crosshair::after {
+    top: 50%;
+    left: 0;
+    width: 20px;
+    height: 2px;
+    transform: translateY(-50%);
 }
 
 #inventory {
@@ -56,21 +139,50 @@ body {
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: 10px;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 6px;
+    border-radius: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     pointer-events: auto;
+    overflow-x: auto;
+    max-width: 95vw;
 }
 
 .inventory-slot {
-    width: 40px;
-    height: 40px;
+    position: relative;
+    width: 44px;
+    height: 44px;
     border: 2px solid #555;
-    background-color: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+    background-color: rgba(20, 20, 20, 0.7);
     cursor: pointer;
+    transition: transform 0.12s ease, border-color 0.12s ease;
+    flex-shrink: 0;
+}
+
+.inventory-slot:hover {
+    border-color: #aaa;
+    transform: translateY(-2px);
 }
 
 .inventory-slot.selected {
-    border-color: white;
-    box-shadow: 0 0 10px white;
+    border-color: #ffd700;
+    box-shadow: 0 0 10px #ffd700, inset 0 0 6px rgba(255, 215, 0, 0.4);
+    transform: translateY(-4px) scale(1.08);
+}
+
+.inventory-slot .slot-key {
+    position: absolute;
+    bottom: 1px;
+    right: 3px;
+    font-size: 11px;
+    font-family: monospace;
+    font-weight: bold;
+    color: #ffffff;
+    text-shadow: 1px 1px 2px #000;
+    pointer-events: none;
 }
 
 #joystick-base {
@@ -122,5 +234,15 @@ body {
     }
     #crosshair {
         display: block;
+    }
+    #stats-hud {
+        top: 8px;
+        left: 8px;
+        font-size: 11px;
+        padding: 6px 10px;
+    }
+    .inventory-slot {
+        width: 38px;
+        height: 38px;
     }
 }
