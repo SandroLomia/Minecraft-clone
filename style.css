@@ -2,8 +2,10 @@ body {
     margin: 0;
     overflow: hidden;
     background-color: #87CEEB; /* Sky blue */
-    font-family: Arial, sans-serif;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 #game-container {
@@ -14,13 +16,26 @@ body {
     height: 100%;
 }
 
+#underwater-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(10, 50, 140, 0.45);
+    pointer-events: none;
+    display: none;
+    z-index: 50;
+    backdrop-filter: blur(0.5px);
+}
+
 #overlay {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0,0,0,0.7);
+    background: rgba(0, 0, 0, 0.75);
     color: white;
     display: flex;
     flex-direction: column;
@@ -31,6 +46,20 @@ body {
     text-align: center;
 }
 
+#overlay h1 {
+    font-size: 3rem;
+    letter-spacing: 4px;
+    margin-bottom: 12px;
+    text-shadow: 2px 2px 0 #000, 4px 4px 0 #333;
+}
+
+#overlay p {
+    font-size: 1.1rem;
+    margin: 6px 0;
+    color: #ddd;
+    text-shadow: 1px 1px 2px #000;
+}
+
 #ui-container {
     position: absolute;
     top: 0;
@@ -38,16 +67,55 @@ body {
     width: 100%;
     height: 100%;
     pointer-events: none;
+    z-index: 60;
 }
 
 #crosshair {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 20px;
-    height: 20px;
-    border: 2px solid white;
+    width: 16px;
+    height: 16px;
     transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+#crosshair::before,
+#crosshair::after {
+    content: '';
+    position: absolute;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+}
+
+#crosshair::before {
+    top: 7px;
+    left: 0;
+    width: 16px;
+    height: 2px;
+}
+
+#crosshair::after {
+    top: 0;
+    left: 7px;
+    width: 2px;
+    height: 16px;
+}
+
+#stats-hud {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: #f0f0f0;
+    font-size: 13px;
+    font-family: monospace;
+    line-height: 1.5;
+    pointer-events: none;
+    text-shadow: 1px 1px 1px #000;
 }
 
 #inventory {
@@ -56,21 +124,51 @@ body {
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: 10px;
+    gap: 6px;
+    padding: 6px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 3px solid #333;
+    border-radius: 6px;
     pointer-events: auto;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 .inventory-slot {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
     border: 2px solid #555;
-    background-color: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+    background-color: rgba(30, 30, 30, 0.8);
+    background-size: 32px 32px;
+    background-position: center;
+    background-repeat: no-repeat;
+    image-rendering: pixelated;
     cursor: pointer;
+    position: relative;
+    box-sizing: border-box;
+    transition: transform 0.1s ease, border-color 0.1s ease;
+}
+
+.inventory-slot:hover {
+    transform: scale(1.08);
+    border-color: #aaa;
 }
 
 .inventory-slot.selected {
-    border-color: white;
-    box-shadow: 0 0 10px white;
+    border-color: #ffffff;
+    box-shadow: 0 0 10px #ffffff, inset 0 0 4px #ffffff;
+    transform: scale(1.12);
+}
+
+.inventory-slot .slot-key {
+    position: absolute;
+    bottom: 1px;
+    right: 3px;
+    font-size: 11px;
+    font-family: monospace;
+    color: #fff;
+    text-shadow: 1px 1px 1px #000;
+    pointer-events: none;
 }
 
 #joystick-base {
